@@ -152,9 +152,9 @@ def vol2_sec2_6():
     cam = camera()
 
     cam.aspect_ratio = 16.0 / 9.0
-    cam.img_width = 100
-    cam.samples_per_pixel = 10
-    cam.max_depth = 5
+    cam.img_width = 400
+    cam.samples_per_pixel = 25
+    cam.max_depth = 15
 
     cam.vfov = 20
     cam.lookfrom = point3(13, 2, 3)
@@ -168,7 +168,7 @@ def vol2_sec2_6():
 
 #------------------------------------------------------------------------
 
-def vol2_sec42_scene_simple() -> hittable_list:
+def vol2_sec42_scene_simple():
     world = hittable_list()
 
     # Ground
@@ -226,7 +226,26 @@ def vol2_sec42_scene_simple() -> hittable_list:
     center10 = center9 + vec3(0, 0.25, 0)
     world.add(Sphere.moving(center9, center10, 0.25, moving_material5))
 
-    return world
+    # Create BVH and wrap it
+    bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
+    world = hittable_list()
+    world.add(bvh)
+
+    cam = camera()
+
+    cam.aspect_ratio = 16.0 / 9.0
+    cam.img_width = 400
+    cam.samples_per_pixel = 100
+    cam.max_depth = 20
+
+    cam.vfov = 20
+    cam.lookfrom = point3(13, 2, 3)
+    cam.lookat = point3(0, 0, 0)
+    cam.vup = vec3(0, 1, 0)
+    cam.defocus_angle = 0.0
+    cam.background = color(0.70, 0.80, 1.00)
+
+    cam.render(world, "../temp/vol2_sec42_scene_simple.ppm")
 
 
 def vol2_sec4_3_simple():
@@ -671,9 +690,9 @@ def cornell_box():
     cam = camera()
 
     cam.aspect_ratio = 1.0
-    cam.img_width = 200
+    cam.img_width = 100
     cam.samples_per_pixel = 100
-    cam.max_depth = 20
+    cam.max_depth = 50
     cam.background = color(0, 0, 0)
 
     cam.vfov = 40

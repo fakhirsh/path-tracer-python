@@ -300,3 +300,29 @@ def random_in_unit_disk() -> vec3:
         if p.length_squared() >= 1:
             continue
         return p
+    
+def random_cosine_direction(normal: vec3) -> vec3:
+    """
+    Generate cosine-weighted random direction in hemisphere around normal.
+    PDF = cos(θ) / π
+    
+    Use this instead of (normal + random_unit_vector()) for diffuse surfaces.
+    """
+    r1 = random.random()
+    r2 = random.random()
+    
+    # Cosine-weighted: z = cos(θ) = sqrt(1 - r2)
+    z = math.sqrt(1.0 - r2)
+    phi = 2.0 * math.pi * r1
+    sin_theta = math.sqrt(r2)
+    x = math.cos(phi) * sin_theta
+    y = math.sin(phi) * sin_theta
+    
+    # Build orthonormal basis around normal
+    w = normalize(normal)
+    a = vec3(0, 1, 0) if abs(w.x) > 0.9 else vec3(1, 0, 0)
+    v = normalize(cross(w, a))
+    u = cross(w, v)
+    
+    # Transform to world space
+    return normalize(x * u + y * v + z * w)

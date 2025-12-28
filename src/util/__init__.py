@@ -24,7 +24,7 @@ Examples:
     unit = normalize(vec3(3, 4, 0))  # vec3(0.6, 0.8, 0)
 """
 
-from .vec3 import vec3, dot, cross, length, normalize, distance, lerp, degrees_to_radians, random_unit_vector, random_on_hemisphere, reflect, refract, random_in_unit_disk
+from .vec3 import *
 from .color import color, write_color
 from .ray import Ray
 from .rtw_image import rtw_image

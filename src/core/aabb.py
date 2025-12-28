@@ -75,10 +75,9 @@ class aabb:
     
     def longest_axis(self) -> int:
         if self.x.size() >= self.y.size():
-            if self.x.size() >= self.z.size():
-                return 0 if self.x.size() >= self.z.size() else 2
-            else:
-                return 1 if self.y.size() >= self.z.size() else 2
+            return 0 if self.x.size() >= self.z.size() else 2
+        else:
+            return 1 if self.y.size() >= self.z.size() else 2
     
     def _pad_to_minimums(self):
         # Adjust the AABB so that no side is narrower than some delta, padding if necessary.
@@ -90,4 +89,9 @@ class aabb:
         if self.z.size() < delta:
             self.z = self.z.expand(delta)
 
-    
+    def surface_area(self) -> float:
+        self._pad_to_minimums()
+        a = self.x.size()
+        b = self.y.size()
+        c = self.z.size()
+        return 2.0 * (a * b + b * c + c * a)

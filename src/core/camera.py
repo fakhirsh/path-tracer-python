@@ -31,6 +31,11 @@ class camera:
     defocus_angle = 0.0
     focus_distance = 10.0
 
+    # Russian Roulette parameters
+    russian_roulette_enabled = False
+    russian_roulette_min_depth = 3  # Start RR after this depth
+    russian_roulette_threshold = 0.1  # Minimum survival probability
+
     def __init__(self):
         pass
 
@@ -38,8 +43,14 @@ class camera:
         # Calculate the image height, and ensure that it's at least 1.
         self.img_height = 1 if int(self.img_width / self.aspect_ratio) < 1 else int(self.img_width / self.aspect_ratio)
         self.center = point3(0, 0, 0)
-        
+
         self.pixel_samples_scale = 1.0 / self.samples_per_pixel
+
+        # Initialize depth tracking statistics
+        self.total_path_depth = 0
+        self.total_paths = 0
+        self.rr_terminations = 0
+        self.max_depth_terminations = 0
 
         self.center = self.lookfrom
         # focal_length = (self.lookfrom - self.lookat).length()
@@ -68,26 +79,51 @@ class camera:
         self.defocus_disk_u = defocus_radius * u
         self.defocus_disk_v = defocus_radius * v
 
-    def ray_color(self, r: Ray, depth: int, world: hittable) -> color:
+    def ray_color(self, r: Ray, depth: int, world: hittable, initial_depth: int = None) -> color:
+        # Track initial depth for statistics
+        if initial_depth is None:
+            initial_depth = depth
+
         if depth <= 0:
+            self.max_depth_terminations += 1
+            self.total_path_depth += (initial_depth - depth)
+            self.total_paths += 1
             return color(0, 0, 0)
-        
+
         rec = hit_record()
 
         if not world.hit(r, interval.from_floats(0.001, float('inf')), rec):
+            self.total_path_depth += (initial_depth - depth)
+            self.total_paths += 1
             return self.background
+
         scattered = Ray(point3(0,0,0), vec3(0,0,0))
         attenuation = color(0,0,0)
         color_from_emission = rec.material.emitted(rec.u, rec.v, rec.p)
-        if not rec.material.scatter(r, rec, attenuation, scattered):
-            return color_from_emission
-        
-        color_from_scatter = rec.material.emitted(rec.u, rec.v, rec.p)
 
         if not rec.material.scatter(r, rec, attenuation, scattered):
+            self.total_path_depth += (initial_depth - depth)
+            self.total_paths += 1
             return color_from_emission
-        
-        color_from_scatter = attenuation * self.ray_color(scattered, depth - 1, world)
+
+        # Russian Roulette path termination
+        if self.russian_roulette_enabled and depth < self.max_depth - self.russian_roulette_min_depth:
+            # Calculate survival probability based on attenuation (throughput)
+            # Use the maximum component to determine importance
+            max_attenuation = max(attenuation.x, attenuation.y, attenuation.z)
+            survival_prob = max(self.russian_roulette_threshold, max_attenuation)
+
+            # Randomly terminate the path
+            if random() > survival_prob:
+                self.rr_terminations += 1
+                self.total_path_depth += (initial_depth - depth)
+                self.total_paths += 1
+                return color_from_emission
+
+            # Scale by inverse probability to maintain unbiased result
+            attenuation = attenuation * (1.0 / survival_prob)
+
+        color_from_scatter = attenuation * self.ray_color(scattered, depth - 1, world, initial_depth)
         return color_from_emission + color_from_scatter
     
 
@@ -161,3 +197,14 @@ class camera:
 
             total_str = format_time(elapsed_total)
             print(f"Done. Image saved to {output_file} (Total time: {total_str})", file=sys.stderr)
+
+            # Display depth statistics
+            if self.total_paths > 0:
+                avg_depth = self.total_path_depth / self.total_paths
+                rr_percentage = (self.rr_terminations / self.total_paths) * 100
+                max_depth_percentage = (self.max_depth_terminations / self.total_paths) * 100
+                print(f"\nDepth Statistics:", file=sys.stderr)
+                print(f"  Average path depth: {avg_depth:.2f} (max: {self.max_depth})", file=sys.stderr)
+                print(f"  Russian Roulette terminations: {self.rr_terminations:,} ({rr_percentage:.1f}%)", file=sys.stderr)
+                print(f"  Max depth terminations: {self.max_depth_terminations:,} ({max_depth_percentage:.1f}%)", file=sys.stderr)
+                print(f"  Total paths traced: {self.total_paths:,}", file=sys.stderr)

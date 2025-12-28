@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from random import random
 from .texture import texture, solid_color
-from util import Ray, color, point3, random_unit_vector, reflect, refract, vec3
+from util import Ray, color, point3, random_unit_vector, reflect, refract, vec3, random_cosine_direction
 from math import log, exp
 from core.hittable import hit_record
 
@@ -30,7 +30,9 @@ class lambertian(material):
         return instance
 
     def scatter(self, r_in: Ray, rec: 'hit_record', attenuation: color, scattered: Ray) -> bool:
-        scatter_direction = rec.normal + random_unit_vector()
+       
+        scatter_direction = random_cosine_direction(rec.normal)
+
         if scatter_direction.near_zero():
             scatter_direction = rec.normal
 
