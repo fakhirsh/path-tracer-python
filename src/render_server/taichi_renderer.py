@@ -32,20 +32,30 @@ class TaichiRenderer(BaseRenderer):
         self.MAX_DEPTH = 50
         self.MAX_BVH_NODES = 4096  # BVH tree can have up to 2*N-1 nodes
 
-        # Timing statistics
-        self.setup_time = 0.0
+        # Timing statistics - detailed breakdown
+        self.timing = {
+            'taichi_init': 0.0,
+            'scene_compile': 0.0,
+            'bvh_flatten': 0.0,
+            'camera_upload': 0.0,
+            'total_setup': 0.0
+        }
         self.sample_times = []
+        self.render_start_time = 0.0
 
         setup_start = time.time()
 
         # Initialize Taichi fields BEFORE base class init
         # (because base class calls _compile() which needs these fields)
+        t0 = time.time()
         self._pre_init_taichi_fields(cam)
+        self.timing['taichi_init'] = time.time() - t0
 
         # Initialize base class (sets up camera, accum_buffer, etc.)
+        # This calls _compile() which will time scene_compile and bvh_flatten
         super().__init__(world, cam, img_path)
 
-        self.setup_time = time.time() - setup_start
+        self.timing['total_setup'] = time.time() - setup_start
 
     def _pre_init_taichi_fields(self, cam: camera):
         """
@@ -101,12 +111,10 @@ class TaichiRenderer(BaseRenderer):
         Extract scene data from Python world and pack into GPU-friendly AoSoA format.
         This is called during __init__ before rendering starts.
         """
-        print("Compiling scene for Taichi GPU rendering...")
+        compile_start = time.time()
 
         # Flatten the world hierarchy to extract all spheres
         spheres = self._extract_spheres(world)
-
-        print(f"  Found {len(spheres)} spheres")
 
         if len(spheres) > self.MAX_SPHERES:
             raise ValueError(f"Scene has {len(spheres)} spheres, but MAX_SPHERES is {self.MAX_SPHERES}")
@@ -152,16 +160,15 @@ class TaichiRenderer(BaseRenderer):
 
             else:
                 # Unsupported material - default to lambertian
-                print(f"  Warning: Sphere {i} has unsupported material '{mat_type_name}', using lambertian")
                 self.sphere_mat_type[i] = self.MAT_LAMBERTIAN
                 self.sphere_mat_albedo[i] = [0.8, 0.8, 0.8]
                 self.sphere_mat_fuzz[i] = 0.0
                 self.sphere_mat_ir[i] = 1.0
 
+        self.timing['scene_compile'] = time.time() - compile_start
+
         # Flatten and upload BVH tree to GPU
         self._flatten_bvh(world)
-
-        print(f"✓ Scene compiled: {len(spheres)} spheres ready on GPU")
 
         return world  # Return original world (we keep a copy on GPU)
 
@@ -189,7 +196,7 @@ class TaichiRenderer(BaseRenderer):
         Uses depth-first traversal to convert tree structure into linear arrays.
         Note: Does NOT build the BVH - just converts the existing tree to GPU format.
         """
-        print("  Flattening BVH for GPU...")
+        bvh_start = time.time()
 
         # Extract the actual BVH root node from the world
         bvh_root = world
@@ -264,10 +271,12 @@ class TaichiRenderer(BaseRenderer):
             self.bvh_right_child[i] = node['right']
             self.bvh_sphere_idx[i] = node['sphere_idx']
 
-        print(f"  ✓ BVH flattened: {len(bvh_nodes)} nodes uploaded to GPU")
+        self.timing['bvh_flatten'] = time.time() - bvh_start
 
     def _upload_camera_to_gpu(self):
         """Copy camera parameters to GPU fields"""
+        upload_start = time.time()
+
         self.cam_center[None] = [self.cam.center.x, self.cam.center.y, self.cam.center.z]
         self.cam_pixel00[None] = [self.cam.pixel00_loc.x, self.cam.pixel00_loc.y, self.cam.pixel00_loc.z]
         self.cam_delta_u[None] = [self.cam.delta_u.x, self.cam.delta_u.y, self.cam.delta_u.z]
@@ -276,19 +285,13 @@ class TaichiRenderer(BaseRenderer):
         self.cam_defocus_disk_v[None] = [self.cam.defocus_disk_v.x, self.cam.defocus_disk_v.y, self.cam.defocus_disk_v.z]
         self.cam_defocus_angle[None] = self.cam.defocus_angle
 
-        # Debug: Print defocus parameters if enabled
-        if self.cam.defocus_angle > 0.0:
-            print(f"\n  Defocus enabled:")
-            print(f"    defocus_angle: {self.cam.defocus_angle}")
-            print(f"    focus_distance: {self.cam.focus_distance}")
-            print(f"    defocus_disk_u: ({self.cam.defocus_disk_u.x:.4f}, {self.cam.defocus_disk_u.y:.4f}, {self.cam.defocus_disk_u.z:.4f})")
-            print(f"    defocus_disk_v: ({self.cam.defocus_disk_v.x:.4f}, {self.cam.defocus_disk_v.y:.4f}, {self.cam.defocus_disk_v.z:.4f})")
-
         # Background color
         self.bg_color[None] = [self.background_color.x, self.background_color.y, self.background_color.z]
 
         # Rendering parameters
         self.render_max_depth[None] = self.max_depth
+
+        self.timing['camera_upload'] = time.time() - upload_start
 
     @ti.func
     def get_ray(self, px: ti.i32, py: ti.i32) -> tuple:
@@ -633,11 +636,14 @@ class TaichiRenderer(BaseRenderer):
         """
         Main rendering loop - launches GPU kernels for each sample.
         """
-        print(f"Rendering with {self.__class__.__name__}...")
-        print(f"  Resolution: {self.cam.img_width}x{self.cam.img_height}")
-        print(f"  Samples: {self.cam.samples_per_pixel}")
-        print(f"  Max depth: {self.max_depth}")
-        print(f"  Spheres: {self.num_spheres[None]}")
+        # Print compact setup summary
+        print(f"\n{self.__class__.__name__}")
+        print(f"Resolution: {self.cam.img_width}x{self.cam.img_height} | Samples: {self.cam.samples_per_pixel} | Depth: {self.max_depth}")
+        print(f"Spheres: {self.num_spheres[None]} | BVH Nodes: {self.num_bvh_nodes[None]}")
+        print(f"\nSetup Timing:")
+        print(f"  Taichi Init: {self.timing['taichi_init']*1000:6.2f}ms | Scene Compile: {self.timing['scene_compile']*1000:6.2f}ms")
+        print(f"  BVH Flatten: {self.timing['bvh_flatten']*1000:6.2f}ms | Camera Upload: {self.timing['camera_upload']*1000:6.2f}ms")
+        print(f"  Total Setup: {self.timing['total_setup']*1000:6.2f}ms")
 
         # Upload camera parameters to GPU
         self._upload_camera_to_gpu()
@@ -645,12 +651,28 @@ class TaichiRenderer(BaseRenderer):
         # Clear accumulation buffer
         self.clear_accumulation_buffer()
 
+        # Warm up JIT compiler (force kernel compilation during setup)
+        print("\nWarming up GPU kernels...")
+        warmup_start = time.time()
+        self.render_sample(0)  # Compile all kernels on first call
+        ti.sync()  # Wait for GPU to finish
+        self.clear_accumulation_buffer()  # Clear the warmup sample
+        warmup_time = time.time() - warmup_start
+        print(f"  Kernel Warmup: {warmup_time*1000:6.2f}ms (JIT compilation complete)")
+
         # Setup live preview if enabled (20 fps = 50ms update interval)
         if enable_preview:
             self.setup_live_preview(update_interval_ms=50)
 
+        # Calculate display interval (every 5%)
+        display_interval = max(1, self.cam.samples_per_pixel // 20)  # 20 updates = every 5%
+        total_pixels = self.cam.img_width * self.cam.img_height
+
         # Render loop - launch GPU kernel for each sample
-        print(f"\nRendering samples:")
+        print(f"\nRendering Progress:")
+        print(f"{'─'*60}")
+        self.render_start_time = time.time()
+
         for sample in range(self.cam.samples_per_pixel):
             self.current_sample = sample + 1
 
@@ -666,14 +688,30 @@ class TaichiRenderer(BaseRenderer):
             sample_time = time.time() - sample_start
             self.sample_times.append(sample_time)
 
-            # Print progress every 10 samples
-            if (sample + 1) % 10 == 0 or sample == 0:
+            # Print progress at intervals (5% increments)
+            should_display = (sample + 1) % display_interval == 0 or sample == 0 or sample == self.cam.samples_per_pixel - 1
+            if should_display:
+                elapsed = time.time() - self.render_start_time
                 avg_time = sum(self.sample_times) / len(self.sample_times)
-                print(f"  Sample {sample + 1}/{self.cam.samples_per_pixel}: "
-                      f"{sample_time*1000:.2f}ms (avg: {avg_time*1000:.2f}ms)")
+                throughput = total_pixels / avg_time if avg_time > 0 else 0
+
+                # Calculate ETA
+                remaining_samples = self.cam.samples_per_pixel - (sample + 1)
+                eta = remaining_samples * avg_time
+
+                # Progress percentage
+                progress = (sample + 1) / self.cam.samples_per_pixel * 100
+
+                print(f"{sample + 1:4d}/{self.cam.samples_per_pixel} ({progress:5.1f}%) │ "
+                      f"{sample_time*1000:5.1f}ms │ "
+                      f"Elapsed: {elapsed:5.1f}s │ "
+                      f"Throughput: {throughput/1e6:5.2f}M pix/s │ "
+                      f"ETA: {eta:4.1f}s")
 
             # Process preview window events (no GPU sync needed - preview callback handles it)
             self.update_preview_if_needed()
+
+        print(f"{'─'*60}")
 
         # Final sync from GPU to CPU
         self._sync_gpu_to_cpu()
@@ -736,7 +774,7 @@ class TaichiRenderer(BaseRenderer):
         return color(0, 0, 0)
 
     def _print_timing_stats(self):
-        """Print detailed timing statistics"""
+        """Print compact timing statistics"""
         if not self.sample_times:
             return
 
@@ -747,15 +785,9 @@ class TaichiRenderer(BaseRenderer):
 
         total_pixels = self.cam.img_width * self.cam.img_height
         pixels_per_sec = total_pixels / avg_sample_time if avg_sample_time > 0 else 0
+        rays_per_sec = pixels_per_sec * self.max_depth
 
-        print(f"\n{'='*60}")
-        print(f"PERFORMANCE STATISTICS")
-        print(f"{'='*60}")
-        print(f"Setup time:              {self.setup_time*1000:.2f} ms")
-        print(f"Total render time:       {total_render_time:.3f} s")
-        print(f"Average sample time:     {avg_sample_time*1000:.2f} ms")
-        print(f"Min sample time:         {min_sample_time*1000:.2f} ms")
-        print(f"Max sample time:         {max_sample_time*1000:.2f} ms")
-        print(f"Throughput:              {pixels_per_sec:,.0f} pixels/sec")
-        print(f"Rays per second:         {pixels_per_sec * self.max_depth:,.0f} rays/sec (approx)")
-        print(f"{'='*60}")
+        print(f"\nPERFORMANCE SUMMARY")
+        print(f"Total Render Time: {total_render_time:6.2f}s")
+        print(f"Sample Time: Avg {avg_sample_time*1000:5.2f}ms | Min {min_sample_time*1000:5.2f}ms | Max {max_sample_time*1000:5.2f}ms")
+        print(f"Throughput: {pixels_per_sec/1e6:5.2f} Mpix/s ({rays_per_sec/1e6:5.2f} Mrays/s)")

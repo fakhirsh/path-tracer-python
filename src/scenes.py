@@ -2,6 +2,7 @@ from core.material import *
 from core.texture import checker_texture, image_texture, noise_texture
 from core import quad
 from render_server.renderer_factory import RendererFactory
+from render_server.interactive_viewer import InteractiveViewer
 from util import *
 from core import *
 from math import sqrt, cos, pi
@@ -182,7 +183,87 @@ def vol2_sec2_6():
     renderer.background_color = color(0.70, 0.80, 1.00)
     renderer.max_depth = 50
     renderer.render()
-    
+
+
+def vol2_sec2_6_interactive():
+    """Interactive version of vol2_sec2_6 with mouse-controlled camera rotation"""
+    world = hittable_list()
+
+    ground_material = lambertian.from_color(color(0.5, 0.5, 0.5))
+    world.add(Sphere.stationary(point3(0, -1000, 0), 1000, ground_material))
+
+    for a in range(-11, 11):
+        for b in range(-11, 11):
+            choose_mat = random.uniform(0, 1)
+            center = point3(a + 0.9 * random.uniform(0, 1), 0.2, b + 0.9 * random.uniform(0, 1))
+
+            if (center - point3(4, 0.2, 0)).length() > 0.9:
+                sphere_material = None
+
+                if choose_mat < 0.8:
+                    # diffuse
+                    albedo = color.random() * color.random()
+                    sphere_material = lambertian.from_color(albedo)
+                    center2 = center + vec3(0, random.uniform(0, 0.5), 0)
+                    world.add(Sphere.moving(center, center2, 0.2, sphere_material))
+                elif choose_mat < 0.95:
+                    # metal
+                    albedo = color.random(0.5, 1)
+                    fuzz = random.uniform(0, 0.5)
+                    sphere_material = metal(albedo, fuzz)
+                    world.add(Sphere.stationary(center, 0.2, sphere_material))
+                else:
+                    # glass
+                    sphere_material = dielectric(1.5)
+                    world.add(Sphere.stationary(center, 0.2, sphere_material))
+
+    material1 = dielectric(1.5)
+    world.add(Sphere.stationary(point3(0, 1, 0), 1.0, material1))
+
+    material2 = lambertian.from_color(color(0.4, 0.2, 0.1))
+    world.add(Sphere.stationary(point3(-4, 1, 0), 1.0, material2))
+
+    material3 = metal(color(0.7, 0.6, 0.5), 0.0)
+    world.add(Sphere.stationary(point3(4, 1, 0), 1.0, material3))
+
+    # Create BVH and wrap it
+    bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
+    world = hittable_list()
+    world.add(bvh)
+
+    cam = camera()
+
+    cam.aspect_ratio = 16.0 / 9.0
+    cam.img_width = 1280
+    cam.samples_per_pixel = 1000  # Not used in interactive mode, but set for final save
+
+    cam.vfov = 20
+    cam.lookfrom = point3(13, 2, 3)
+    cam.lookat = point3(0, 0, 0)
+    cam.vup = vec3(0, 1, 0)
+
+    # Defocus blur (depth of field)
+    cam.defocus_angle = 0.6  # Aperture size (0 = no blur, larger = more blur)
+    cam.focus_distance = 10.0  # Distance to focal plane (objects at this distance are sharp)
+
+    # Create interactive viewer
+    viewer = InteractiveViewer(
+        world,
+        cam,
+        "../temp/vol2_sec2_6_interactive.ppm"
+    )
+    viewer.background_color = color(0.70, 0.80, 1.00)
+    viewer.max_depth = 50
+    viewer.max_samples = 500  # Stop rendering after this many samples (window stays open)
+
+    print("\nInteractive Controls:")
+    print("  - Left-click and drag to rotate camera")
+    print("  - Close window to exit and save final image")
+    print()
+
+    # Run interactive rendering
+    viewer.render_interactive()
+
 
 #------------------------------------------------------------------------
 
