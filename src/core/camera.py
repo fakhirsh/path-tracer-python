@@ -20,9 +20,6 @@ class camera:
     aspect_ratio = 1.0
     img_width = 100
     samples_per_pixel = 10
-    max_depth = 10
-    background = color(0.70, 0.80, 1.00)
-
     vfov = 90
     lookfrom = point3(0,0,0)
     lookat = point3(0,0,-1)
@@ -30,11 +27,6 @@ class camera:
 
     defocus_angle = 0.0
     focus_distance = 10.0
-
-    # Russian Roulette parameters
-    russian_roulette_enabled = False
-    russian_roulette_min_depth = 3  # Start RR after this depth
-    russian_roulette_threshold = 0.1  # Minimum survival probability
 
     def __init__(self):
         pass

@@ -1,6 +1,7 @@
 from core.material import *
 from core.texture import checker_texture, image_texture, noise_texture
 from core import quad
+from render_server.renderer_factory import RendererFactory
 from util import *
 from core import *
 from math import sqrt, cos, pi
@@ -19,26 +20,26 @@ def vol1_sec9_5():
     obj = Sphere.stationary(point3(0,-100.5,-1), 100, ground_material)
     world.add(obj)
 
-    # Create BVH and wrap it
-    bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
-    world = hittable_list()
-    world.add(bvh)
-
     cam = camera()
 
     cam.aspect_ratio = 16.0 / 9.0
-    cam.img_width = 500
-    cam.samples_per_pixel = 50
-    cam.max_depth = 10
+    cam.img_width = 800
+    cam.samples_per_pixel = 100
 
     cam.vfov = 20
     cam.lookfrom = point3(0, 1, -5)
     cam.lookat = point3(0, 0, 0)
     cam.vup = vec3(0, 1, 0)
     cam.defocus_angle = 0.0
-    cam.background = color(0.70, 0.80, 1.00)
 
-    cam.render(world, "../temp/vol1_sec9_5.ppm")
+    # Use factory to create renderer (can easily switch between 'gpu' and 'cpu')
+    renderer = RendererFactory.create(
+        'taichi',  # Change to 'cpu' for CPU renderer
+        world,
+        cam,
+        "../temp/vol1_sec9_5.ppm"
+    )
+    renderer.render()
 
 #------------------------------------------------------------------------
 
@@ -89,9 +90,9 @@ def vol1_sec14_1():
     cam = camera()
 
     cam.aspect_ratio = 16.0 / 9.0
-    cam.img_width = 100
-    cam.samples_per_pixel = 10
-    cam.max_depth = 5
+    cam.img_width = 800
+    cam.samples_per_pixel = 100
+    cam.max_depth = 50
 
     cam.vfov = 20
     cam.lookfrom = point3(13, 2, 3)
@@ -100,7 +101,14 @@ def vol1_sec14_1():
     cam.defocus_angle = 0.0
     cam.background = color(0.70, 0.80, 1.00)
 
-    cam.render(world, "../temp/vol1_sec14_1.ppm")
+    # Use factory to create renderer (can easily switch between 'gpu' and 'cpu')
+    renderer = RendererFactory.create(
+        'taichi',  # Change to 'cpu' for CPU renderer
+        world,
+        cam,
+        "../temp/vol1_sec9_5.ppm"
+    )
+    renderer.render()
 
 #------------------------------------------------------------------------
 
