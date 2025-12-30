@@ -158,8 +158,8 @@ class TaichiRenderer(BaseRenderer):
                 self.sphere_mat_fuzz[i] = 0.0
                 self.sphere_mat_ir[i] = 1.0
 
-        # Build and upload BVH tree
-        self._build_bvh(world)
+        # Flatten and upload BVH tree to GPU
+        self._flatten_bvh(world)
 
         print(f"✓ Scene compiled: {len(spheres)} spheres ready on GPU")
 
@@ -183,12 +183,13 @@ class TaichiRenderer(BaseRenderer):
 
         return spheres
 
-    def _build_bvh(self, world: hittable):
+    def _flatten_bvh(self, world: hittable):
         """
-        Flatten BVH tree into GPU-friendly arrays.
-        Uses depth-first traversal to convert tree into linear arrays.
+        Flatten CPU-built BVH tree into GPU-friendly arrays.
+        Uses depth-first traversal to convert tree structure into linear arrays.
+        Note: Does NOT build the BVH - just converts the existing tree to GPU format.
         """
-        print("  Building BVH acceleration structure...")
+        print("  Flattening BVH for GPU...")
 
         # Extract the actual BVH root node from the world
         bvh_root = world
@@ -263,7 +264,7 @@ class TaichiRenderer(BaseRenderer):
             self.bvh_right_child[i] = node['right']
             self.bvh_sphere_idx[i] = node['sphere_idx']
 
-        print(f"  ✓ BVH built: {len(bvh_nodes)} nodes")
+        print(f"  ✓ BVH flattened: {len(bvh_nodes)} nodes uploaded to GPU")
 
     def _upload_camera_to_gpu(self):
         """Copy camera parameters to GPU fields"""
@@ -274,6 +275,14 @@ class TaichiRenderer(BaseRenderer):
         self.cam_defocus_disk_u[None] = [self.cam.defocus_disk_u.x, self.cam.defocus_disk_u.y, self.cam.defocus_disk_u.z]
         self.cam_defocus_disk_v[None] = [self.cam.defocus_disk_v.x, self.cam.defocus_disk_v.y, self.cam.defocus_disk_v.z]
         self.cam_defocus_angle[None] = self.cam.defocus_angle
+
+        # Debug: Print defocus parameters if enabled
+        if self.cam.defocus_angle > 0.0:
+            print(f"\n  Defocus enabled:")
+            print(f"    defocus_angle: {self.cam.defocus_angle}")
+            print(f"    focus_distance: {self.cam.focus_distance}")
+            print(f"    defocus_disk_u: ({self.cam.defocus_disk_u.x:.4f}, {self.cam.defocus_disk_u.y:.4f}, {self.cam.defocus_disk_u.z:.4f})")
+            print(f"    defocus_disk_v: ({self.cam.defocus_disk_v.x:.4f}, {self.cam.defocus_disk_v.y:.4f}, {self.cam.defocus_disk_v.z:.4f})")
 
         # Background color
         self.bg_color[None] = [self.background_color.x, self.background_color.y, self.background_color.z]

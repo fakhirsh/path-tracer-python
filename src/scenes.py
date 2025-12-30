@@ -160,18 +160,28 @@ def vol2_sec2_6():
     cam = camera()
 
     cam.aspect_ratio = 16.0 / 9.0
-    cam.img_width = 400
-    cam.samples_per_pixel = 25
-    cam.max_depth = 15
+    cam.img_width = 1280
+    cam.samples_per_pixel = 100
 
     cam.vfov = 20
     cam.lookfrom = point3(13, 2, 3)
     cam.lookat = point3(0, 0, 0)
     cam.vup = vec3(0, 1, 0)
-    cam.defocus_angle = 0.0
-    cam.background = color(0.70, 0.80, 1.00)
 
-    cam.render(world, "../temp/vol2_sec2_6.ppm")
+    # Defocus blur (depth of field)
+    cam.defocus_angle = 0.6  # Aperture size (0 = no blur, larger = more blur)
+    cam.focus_distance = 10.0  # Distance to focal plane (objects at this distance are sharp)
+
+    # Use factory to create renderer (can easily switch between 'gpu' and 'cpu')
+    renderer = RendererFactory.create(
+        'taichi',  # Change to 'cpu' for CPU renderer
+        world,
+        cam,
+        "../temp/vol2_sec2_6.ppm"
+    )
+    renderer.background_color = color(0.70, 0.80, 1.00)
+    renderer.max_depth = 50
+    renderer.render()
     
 
 #------------------------------------------------------------------------
@@ -700,8 +710,6 @@ def cornell_box():
     cam.aspect_ratio = 1.0
     cam.img_width = 100
     cam.samples_per_pixel = 100
-    cam.max_depth = 50
-    cam.background = color(0, 0, 0)
 
     cam.vfov = 40
     cam.lookfrom = point3(278, 278, -800)
@@ -710,7 +718,15 @@ def cornell_box():
 
     cam.defocus_angle = 0
 
-    cam.render(world, "../temp/cornell_box.ppm")
+    renderer = RendererFactory.create(
+        'taichi',  # Change to 'cpu' for CPU renderer
+        world,
+        cam,
+        "../temp/cornell_box.ppm"
+    )
+    renderer.background_color = color(0, 0, 0)
+    renderer.max_depth = 50
+    renderer.render()
 
 #------------------------------------------------------------------------
 
