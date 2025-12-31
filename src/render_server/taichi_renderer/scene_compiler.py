@@ -15,6 +15,7 @@ PRIM_QUAD = 2
 MAT_LAMBERTIAN = 0
 MAT_METAL = 1
 MAT_DIELECTRIC = 2
+MAT_EMISSIVE = 3
 
 # Texture type constants
 TEX_SOLID = 0
@@ -27,28 +28,33 @@ def extract_spheres(world) -> List:
     """
     Recursively extract all Sphere objects from world hierarchy.
     Handles: Sphere, hittable_list, bvh_node
-    Returns: List of Sphere objects
+    Returns: List of unique Sphere objects (deduplicated by object identity)
     """
     from core.sphere import Sphere
     from core.hittable_list import hittable_list
     from core.bvh_node import bvh_node
 
+    seen = set()
     spheres = []
 
-    # Check if this is a Sphere
-    if isinstance(world, Sphere):
-        spheres.append(world)
-    # Check if this is a hittable_list
-    elif isinstance(world, hittable_list):
-        for item in world.objects:
-            spheres.extend(extract_spheres(item))
-    # Check if this is a bvh_node
-    elif isinstance(world, bvh_node):
-        if world.left is not None:
-            spheres.extend(extract_spheres(world.left))
-        if world.right is not None:
-            spheres.extend(extract_spheres(world.right))
+    def _extract(obj):
+        # Check if this is a Sphere
+        if isinstance(obj, Sphere):
+            if id(obj) not in seen:
+                seen.add(id(obj))
+                spheres.append(obj)
+        # Check if this is a hittable_list
+        elif isinstance(obj, hittable_list):
+            for item in obj.objects:
+                _extract(item)
+        # Check if this is a bvh_node
+        elif isinstance(obj, bvh_node):
+            if obj.left is not None:
+                _extract(obj.left)
+            if obj.right is not None:
+                _extract(obj.right)
 
+    _extract(world)
     return spheres
 
 
@@ -56,28 +62,33 @@ def extract_quads(world) -> List:
     """
     Recursively extract all quad objects from world hierarchy.
     Handles: quad, hittable_list, bvh_node
-    Returns: List of quad objects
+    Returns: List of unique quad objects (deduplicated by object identity)
     """
     from core.quad import quad
     from core.hittable_list import hittable_list
     from core.bvh_node import bvh_node
 
+    seen = set()
     quads = []
 
-    # Check if this is a quad
-    if isinstance(world, quad):
-        quads.append(world)
-    # Check if this is a hittable_list
-    elif isinstance(world, hittable_list):
-        for item in world.objects:
-            quads.extend(extract_quads(item))
-    # Check if this is a bvh_node
-    elif isinstance(world, bvh_node):
-        if world.left is not None:
-            quads.extend(extract_quads(world.left))
-        if world.right is not None:
-            quads.extend(extract_quads(world.right))
+    def _extract(obj):
+        # Check if this is a quad
+        if isinstance(obj, quad):
+            if id(obj) not in seen:
+                seen.add(id(obj))
+                quads.append(obj)
+        # Check if this is a hittable_list
+        elif isinstance(obj, hittable_list):
+            for item in obj.objects:
+                _extract(item)
+        # Check if this is a bvh_node
+        elif isinstance(obj, bvh_node):
+            if obj.left is not None:
+                _extract(obj.left)
+            if obj.right is not None:
+                _extract(obj.right)
 
+    _extract(world)
     return quads
 
 
@@ -85,28 +96,33 @@ def extract_triangles(world) -> List:
     """
     Recursively extract all triangle objects from world hierarchy.
     Handles: triangle, hittable_list, bvh_node
-    Returns: List of triangle objects
+    Returns: List of unique triangle objects (deduplicated by object identity)
     """
     from core.triangle import triangle
     from core.hittable_list import hittable_list
     from core.bvh_node import bvh_node
 
+    seen = set()
     triangles = []
 
-    # Check if this is a triangle
-    if isinstance(world, triangle):
-        triangles.append(world)
-    # Check if this is a hittable_list
-    elif isinstance(world, hittable_list):
-        for item in world.objects:
-            triangles.extend(extract_triangles(item))
-    # Check if this is a bvh_node
-    elif isinstance(world, bvh_node):
-        if world.left is not None:
-            triangles.extend(extract_triangles(world.left))
-        if world.right is not None:
-            triangles.extend(extract_triangles(world.right))
+    def _extract(obj):
+        # Check if this is a triangle
+        if isinstance(obj, triangle):
+            if id(obj) not in seen:
+                seen.add(id(obj))
+                triangles.append(obj)
+        # Check if this is a hittable_list
+        elif isinstance(obj, hittable_list):
+            for item in obj.objects:
+                _extract(item)
+        # Check if this is a bvh_node
+        elif isinstance(obj, bvh_node):
+            if obj.left is not None:
+                _extract(obj.left)
+            if obj.right is not None:
+                _extract(obj.right)
 
+    _extract(world)
     return triangles
 
 
@@ -228,6 +244,7 @@ def compile_materials(spheres: List, image_texture_registry: Dict = None) -> Dic
         'material_albedo': np.ndarray of shape (N, 3) dtype=float32
         'material_fuzz': np.ndarray of shape (N,) dtype=float32
         'material_ir': np.ndarray of shape (N,) dtype=float32
+        'material_emit_color': np.ndarray of shape (N, 3) dtype=float32
         'texture_type': np.ndarray of shape (N,) dtype=int32
         'texture_scale': np.ndarray of shape (N,) dtype=float32
         'texture_color1': np.ndarray of shape (N, 3) dtype=float32
@@ -242,6 +259,7 @@ def compile_materials(spheres: List, image_texture_registry: Dict = None) -> Dic
     material_albedo = np.zeros((n, 3), dtype=np.float32)
     material_fuzz = np.zeros(n, dtype=np.float32)
     material_ir = np.zeros(n, dtype=np.float32)
+    material_emit_color = np.zeros((n, 3), dtype=np.float32)
 
     texture_type = np.zeros(n, dtype=np.int32)
     texture_scale = np.ones(n, dtype=np.float32)
@@ -333,6 +351,27 @@ def compile_materials(spheres: List, image_texture_registry: Dict = None) -> Dic
             texture_color1[i] = [1.0, 1.0, 1.0]
             texture_color2[i] = [1.0, 1.0, 1.0]
 
+        elif mat_type_name == 'diffuse_light':
+            material_type[i] = MAT_EMISSIVE
+
+            # Extract emission color from texture
+            try:
+                emit_color = mat.tex.value(0, 0, ref_point if 'ref_point' in locals() else center)
+                material_emit_color[i] = [emit_color.x, emit_color.y, emit_color.z]
+            except:
+                material_emit_color[i] = [1.0, 1.0, 1.0]
+
+            # Emissive materials don't scatter
+            material_albedo[i] = [0.0, 0.0, 0.0]
+            material_fuzz[i] = 0.0
+            material_ir[i] = 1.0
+
+            # Initialize texture fields (not used for emissive)
+            texture_type[i] = TEX_SOLID
+            texture_scale[i] = 1.0
+            texture_color1[i] = [0.0, 0.0, 0.0]
+            texture_color2[i] = [0.0, 0.0, 0.0]
+
         else:
             # Unsupported material - default to lambertian
             material_type[i] = MAT_LAMBERTIAN
@@ -351,6 +390,7 @@ def compile_materials(spheres: List, image_texture_registry: Dict = None) -> Dic
         'material_albedo': material_albedo,
         'material_fuzz': material_fuzz,
         'material_ir': material_ir,
+        'material_emit_color': material_emit_color,
         'texture_type': texture_type,
         'texture_scale': texture_scale,
         'texture_color1': texture_color1,
@@ -369,6 +409,7 @@ def compile_quad_materials(quads: List, image_texture_registry: Dict = None) -> 
         'material_albedo': np.ndarray of shape (N, 3) dtype=float32
         'material_fuzz': np.ndarray of shape (N,) dtype=float32
         'material_ir': np.ndarray of shape (N,) dtype=float32
+        'material_emit_color': np.ndarray of shape (N, 3) dtype=float32
         'texture_type': np.ndarray of shape (N,) dtype=int32
         'texture_scale': np.ndarray of shape (N,) dtype=float32
         'texture_color1': np.ndarray of shape (N, 3) dtype=float32
@@ -382,6 +423,7 @@ def compile_quad_materials(quads: List, image_texture_registry: Dict = None) -> 
     material_albedo = np.zeros((n, 3), dtype=np.float32)
     material_fuzz = np.zeros(n, dtype=np.float32)
     material_ir = np.zeros(n, dtype=np.float32)
+    material_emit_color = np.zeros((n, 3), dtype=np.float32)
 
     texture_type = np.zeros(n, dtype=np.int32)
     texture_scale = np.ones(n, dtype=np.float32)
@@ -474,6 +516,27 @@ def compile_quad_materials(quads: List, image_texture_registry: Dict = None) -> 
             texture_color1[i] = [1.0, 1.0, 1.0]
             texture_color2[i] = [1.0, 1.0, 1.0]
 
+        elif mat_type_name == 'diffuse_light':
+            material_type[i] = MAT_EMISSIVE
+
+            # Extract emission color from texture
+            try:
+                emit_color = mat.tex.value(0, 0, ref_point if 'ref_point' in locals() else center)
+                material_emit_color[i] = [emit_color.x, emit_color.y, emit_color.z]
+            except:
+                material_emit_color[i] = [1.0, 1.0, 1.0]
+
+            # Emissive materials don't scatter
+            material_albedo[i] = [0.0, 0.0, 0.0]
+            material_fuzz[i] = 0.0
+            material_ir[i] = 1.0
+
+            # Initialize texture fields (not used for emissive)
+            texture_type[i] = TEX_SOLID
+            texture_scale[i] = 1.0
+            texture_color1[i] = [0.0, 0.0, 0.0]
+            texture_color2[i] = [0.0, 0.0, 0.0]
+
         else:
             # Unsupported material - default to lambertian
             material_type[i] = MAT_LAMBERTIAN
@@ -492,6 +555,7 @@ def compile_quad_materials(quads: List, image_texture_registry: Dict = None) -> 
         'material_albedo': material_albedo,
         'material_fuzz': material_fuzz,
         'material_ir': material_ir,
+        'material_emit_color': material_emit_color,
         'texture_type': texture_type,
         'texture_scale': texture_scale,
         'texture_color1': texture_color1,
@@ -510,6 +574,7 @@ def compile_triangle_materials(triangles: List, image_texture_registry: Dict = N
         'material_albedo': np.ndarray of shape (N, 3) dtype=float32
         'material_fuzz': np.ndarray of shape (N,) dtype=float32
         'material_ir': np.ndarray of shape (N,) dtype=float32
+        'material_emit_color': np.ndarray of shape (N, 3) dtype=float32
         'texture_type': np.ndarray of shape (N,) dtype=int32
         'texture_scale': np.ndarray of shape (N,) dtype=float32
         'texture_color1': np.ndarray of shape (N, 3) dtype=float32
@@ -523,6 +588,7 @@ def compile_triangle_materials(triangles: List, image_texture_registry: Dict = N
     material_albedo = np.zeros((n, 3), dtype=np.float32)
     material_fuzz = np.zeros(n, dtype=np.float32)
     material_ir = np.zeros(n, dtype=np.float32)
+    material_emit_color = np.zeros((n, 3), dtype=np.float32)
 
     texture_type = np.zeros(n, dtype=np.int32)
     texture_scale = np.ones(n, dtype=np.float32)
@@ -615,6 +681,27 @@ def compile_triangle_materials(triangles: List, image_texture_registry: Dict = N
             texture_color1[i] = [1.0, 1.0, 1.0]
             texture_color2[i] = [1.0, 1.0, 1.0]
 
+        elif mat_type_name == 'diffuse_light':
+            material_type[i] = MAT_EMISSIVE
+
+            # Extract emission color from texture
+            try:
+                emit_color = mat.tex.value(0, 0, ref_point if 'ref_point' in locals() else center)
+                material_emit_color[i] = [emit_color.x, emit_color.y, emit_color.z]
+            except:
+                material_emit_color[i] = [1.0, 1.0, 1.0]
+
+            # Emissive materials don't scatter
+            material_albedo[i] = [0.0, 0.0, 0.0]
+            material_fuzz[i] = 0.0
+            material_ir[i] = 1.0
+
+            # Initialize texture fields (not used for emissive)
+            texture_type[i] = TEX_SOLID
+            texture_scale[i] = 1.0
+            texture_color1[i] = [0.0, 0.0, 0.0]
+            texture_color2[i] = [0.0, 0.0, 0.0]
+
         else:
             # Unsupported material - default to lambertian
             material_type[i] = MAT_LAMBERTIAN
@@ -633,6 +720,7 @@ def compile_triangle_materials(triangles: List, image_texture_registry: Dict = N
         'material_albedo': material_albedo,
         'material_fuzz': material_fuzz,
         'material_ir': material_ir,
+        'material_emit_color': material_emit_color,
         'texture_type': texture_type,
         'texture_scale': texture_scale,
         'texture_color1': texture_color1,

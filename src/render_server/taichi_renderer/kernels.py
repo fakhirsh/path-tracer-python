@@ -222,7 +222,9 @@ def hit_aabb(node_idx: ti.i32, ray_origin: ti.math.vec3, ray_dir: ti.math.vec3,
         t_min_local = ti.max(t0, t_min_local)
         t_max_local = ti.min(t1, t_max_local)
 
-        if t_max_local <= t_min_local:
+        # Use < instead of <= to handle thin AABBs where t_max ≈ t_min due to floating point precision
+        # This matches the behavior of hit_aabb_optimized which uses tmax >= tmin
+        if t_max_local < t_min_local:
             hit = False
 
     return hit
@@ -681,6 +683,34 @@ def reflectance(cosine: ti.f32, ref_idx: ti.f32) -> ti.f32:
 
 
 @ti.func
+def emitted(prim_type: ti.i32, prim_idx: ti.i32, u: ti.f32, v: ti.f32, hit_point: ti.math.vec3) -> ti.math.vec3:
+    """
+    Get emission color for a hit point.
+    Returns: RGB emission color (0,0,0 for non-emissive materials)
+    """
+    # Get material type
+    mat_type = 0
+    if prim_type == 0:  # PRIM_SPHERE
+        mat_type = fields.material_type[prim_idx]
+    elif prim_type == 1:  # PRIM_TRIANGLE
+        mat_type = fields.triangle_material_type[prim_idx]
+    elif prim_type == 2:  # PRIM_QUAD
+        mat_type = fields.quad_material_type[prim_idx]
+
+    # Only emissive materials (type 3) emit light
+    emit_color = ti.math.vec3(0.0)
+    if mat_type == 3:  # MAT_EMISSIVE
+        if prim_type == 0:  # PRIM_SPHERE
+            emit_color = fields.material_emit_color[prim_idx]
+        elif prim_type == 1:  # PRIM_TRIANGLE
+            emit_color = fields.triangle_material_emit_color[prim_idx]
+        elif prim_type == 2:  # PRIM_QUAD
+            emit_color = fields.quad_material_emit_color[prim_idx]
+
+    return emit_color
+
+
+@ti.func
 def scatter(ray_dir: ti.math.vec3, hit_point: ti.math.vec3, normal: ti.math.vec3,
             prim_type: ti.i32, prim_idx: ti.i32) -> tuple:
     """
@@ -765,6 +795,11 @@ def scatter(ray_dir: ti.math.vec3, hit_point: ti.math.vec3, normal: ti.math.vec3
         # Dielectric doesn't attenuate (always white)
         attenuation = ti.math.vec3(1.0)
         scattered = True
+
+    # EMISSIVE material (light source)
+    elif mat_type == 3:
+        # Emissive materials don't scatter light
+        scattered = False
 
     return scattered, scatter_dir, attenuation
 
@@ -900,6 +935,10 @@ def trace_ray(ray_origin: ti.math.vec3, ray_dir: ti.math.vec3) -> ti.math.vec3:
         )
 
         if hit:
+            # Add emitted light from this surface
+            emit = emitted(prim_type, prim_idx, 0.0, 0.0, hit_point)
+            color = color + throughput * emit
+
             # Material scattering
             scattered, scatter_dir, attenuation = scatter(
                 current_dir, hit_point, normal, prim_type, prim_idx
@@ -911,16 +950,12 @@ def trace_ray(ray_origin: ti.math.vec3, ray_dir: ti.math.vec3) -> ti.math.vec3:
                 current_dir = scatter_dir
                 throughput = throughput * attenuation
             else:
-                # Ray was absorbed
+                # Ray was absorbed (likely hit an emissive surface)
                 break
 
         else:
-            # Ray missed - add sky color weighted by throughput
-            # Sky gradient: blue to white based on y direction
-            unit_dir = current_dir.normalized()
-            a = 0.5 * (unit_dir.y + 1.0)
-            sky = (1.0 - a) * ti.math.vec3(1.0, 1.0, 1.0) + a * fields.bg_color[None]
-            color = color + throughput * sky
+            # Ray missed - add background color weighted by throughput
+            color = color + throughput * fields.bg_color[None]
             break
 
     return color

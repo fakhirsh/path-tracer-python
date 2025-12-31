@@ -113,6 +113,7 @@ class TaichiRenderer:
             fields.material_albedo[i] = materials['material_albedo'][i]
             fields.material_fuzz[i] = materials['material_fuzz'][i]
             fields.material_ir[i] = materials['material_ir'][i]
+            fields.material_emit_color[i] = materials['material_emit_color'][i]
 
         # Sphere Textures
         for i in range(n):
@@ -133,12 +134,23 @@ class TaichiRenderer:
             fields.quad_w[i] = quad_geometry['quad_w'][i]
         fields.num_quads[None] = nq
 
+        # DEBUG: Verify quad 3 (back wall) data upload
+        if nq > 3:
+            print(f"DEBUG GPU UPLOAD - Quad 3 (back wall):")
+            print(f"  Q = {quad_geometry['quad_Q'][3]}")
+            print(f"  u = {quad_geometry['quad_u'][3]}")
+            print(f"  v = {quad_geometry['quad_v'][3]}")
+            print(f"  normal = {quad_geometry['quad_normal'][3]}")
+            print(f"  D = {quad_geometry['quad_D'][3]}")
+            print(f"  w = {quad_geometry['quad_w'][3]}")
+
         # Quad Materials (separate arrays from spheres)
         for i in range(nq):
             fields.quad_material_type[i] = quad_materials['material_type'][i]
             fields.quad_material_albedo[i] = quad_materials['material_albedo'][i]
             fields.quad_material_fuzz[i] = quad_materials['material_fuzz'][i]
             fields.quad_material_ir[i] = quad_materials['material_ir'][i]
+            fields.quad_material_emit_color[i] = quad_materials['material_emit_color'][i]
 
         # Quad Textures
         for i in range(nq):
@@ -147,6 +159,13 @@ class TaichiRenderer:
             fields.quad_texture_color1[i] = quad_materials['texture_color1'][i]
             fields.quad_texture_color2[i] = quad_materials['texture_color2'][i]
             fields.quad_texture_image_idx[i] = quad_materials['texture_image_idx'][i]
+
+        # DEBUG: Verify quad 3 material data
+        if nq > 3:
+            print(f"  material_type = {quad_materials['material_type'][3]}")
+            print(f"  material_albedo = {quad_materials['material_albedo'][3]}")
+            print(f"  emit_color = {quad_materials['material_emit_color'][3]}")
+            print(f"  texture_type = {quad_materials['texture_type'][3]}")
 
         # Triangle Geometry
         nt = triangle_geometry['num_triangles']
@@ -165,6 +184,7 @@ class TaichiRenderer:
             fields.triangle_material_albedo[i] = triangle_materials['material_albedo'][i]
             fields.triangle_material_fuzz[i] = triangle_materials['material_fuzz'][i]
             fields.triangle_material_ir[i] = triangle_materials['material_ir'][i]
+            fields.triangle_material_emit_color[i] = triangle_materials['material_emit_color'][i]
 
         # Triangle Textures
         for i in range(nt):
@@ -237,6 +257,10 @@ class TaichiRenderer:
         Args:
             enable_preview: Show live preview window during rendering
         """
+        # Re-upload camera and render settings in case they were changed after __init__
+        # This ensures background_color and max_depth changes are picked up
+        self._upload_camera()
+
         self._print_setup_info()
 
         # Kernel warmup (JIT compile)

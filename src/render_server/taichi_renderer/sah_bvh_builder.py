@@ -203,10 +203,12 @@ class SAHBVHBuilder:
         best_axis, best_pos, best_cost = self._find_best_split(prims, node.bbox)
 
         # Check if split is worth it (compare to leaf cost)
+        # NOTE: We must ensure each leaf has exactly 1 primitive, otherwise
+        # primitives will be dropped. Multi-primitive leaves would require
+        # different BVH node structure to store multiple prim indices.
         leaf_cost = self.intersect_cost * len(prims)
-        if best_cost >= leaf_cost and len(prims) <= 4:
-            # Too expensive to split - create leaf with multiple primitives
-            # For now, just pick first primitive (TODO: handle multiple prims per leaf)
+        if best_cost >= leaf_cost and len(prims) == 1:
+            # Single primitive leaf - no split needed
             node.prim_type = prims[0].prim_type
             node.prim_idx = prims[0].prim_idx
             return node

@@ -80,18 +80,21 @@ material_type = ti.field(ti.i32, MAX_SPHERES)  # Indexed by sphere primitive
 material_albedo = ti.Vector.field(3, ti.f32, MAX_SPHERES)
 material_fuzz = ti.field(ti.f32, MAX_SPHERES)      # Metal only
 material_ir = ti.field(ti.f32, MAX_SPHERES)        # Dielectric only (index of refraction)
+material_emit_color = ti.Vector.field(3, ti.f32, MAX_SPHERES)  # Emissive only
 
 # Quad Materials
 quad_material_type = ti.field(ti.i32, MAX_QUADS)
 quad_material_albedo = ti.Vector.field(3, ti.f32, MAX_QUADS)
 quad_material_fuzz = ti.field(ti.f32, MAX_QUADS)
 quad_material_ir = ti.field(ti.f32, MAX_QUADS)
+quad_material_emit_color = ti.Vector.field(3, ti.f32, MAX_QUADS)  # Emissive only
 
 # Triangle Materials
 triangle_material_type = ti.field(ti.i32, MAX_TRIANGLES)
 triangle_material_albedo = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
 triangle_material_fuzz = ti.field(ti.f32, MAX_TRIANGLES)
 triangle_material_ir = ti.field(ti.f32, MAX_TRIANGLES)
+triangle_material_emit_color = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)  # Emissive only
 
 # =============================================================================
 # COLD DATA: Textures

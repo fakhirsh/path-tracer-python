@@ -5,7 +5,7 @@ from render_server.renderer_factory import RendererFactory
 from render_server.interactive_viewer import InteractiveViewer
 from util import *
 from core import *
-from math import sqrt, cos, pi
+from math import sqrt, cos, sin, pi, radians
 import random
 import time
 import logging
@@ -809,20 +809,94 @@ def simple_light():
     cam = camera()
 
     cam.aspect_ratio = 16.0 / 9.0
-    cam.img_width = 200
-    cam.samples_per_pixel = 10
-    cam.max_depth = 5
-    cam.background = color(0, 0, 0)
+    cam.img_width = 800
+    cam.samples_per_pixel = 200
+    cam.max_depth = 50
 
     cam.vfov = 20
     cam.lookfrom = point3(26, 3, 6)
     cam.lookat = point3(0, 2, 0)
     cam.vup = vec3(0, 1, 0)
-    cam.background = color(0.70, 0.80, 1.00)
 
     cam.defocus_angle = 0
 
-    cam.render(world, "../temp/simple_light.ppm")
+    # Use Taichi GPU renderer for MAXIMUM efficiency!
+    renderer = RendererFactory.create(
+        'taichi',
+        world,
+        cam,
+        "../temp/simple_light.ppm"
+    )
+    renderer.background_color = color(0, 0, 0)
+    renderer.max_depth = 50
+    renderer.render()
+
+#------------------------------------------------------------------------
+
+def box(a: point3, b: point3, mat: material, angle: float = 0.0) -> hittable_list:
+    """Create an axis-aligned box defined by two corner points.
+
+    Args:
+        a: First corner point
+        b: Opposite corner point
+        mat: Material for all box faces
+        angle: Rotation angle in degrees around Y axis (default: 0.0)
+    """
+    sides = hittable_list()
+
+    # Construct the two opposite vertices with the minimum and maximum coordinates.
+    min_pt = vec3(min(a.x, b.x), min(a.y, b.y), min(a.z, b.z))
+    max_pt = vec3(max(a.x, b.x), max(a.y, b.y), max(a.z, b.z))
+
+    dx = vec3(max_pt.x - min_pt.x, 0, 0)
+    dy = vec3(0, max_pt.y - min_pt.y, 0)
+    dz = vec3(0, 0, max_pt.z - min_pt.z)
+
+    # Helper function to rotate a vector around Y axis
+    def rotate_y(v: vec3, theta_rad: float) -> vec3:
+        cos_theta = cos(theta_rad)
+        sin_theta = sin(theta_rad)
+        return vec3(
+            cos_theta * v.x + sin_theta * v.z,
+            v.y,
+            -sin_theta * v.x + cos_theta * v.z
+        )
+
+    # Apply rotation if angle is non-zero
+    if angle != 0.0:
+        theta = radians(angle)
+
+        # Rotate corner positions around the center of the box
+        center = (min_pt + max_pt) * 0.5
+
+        # Create vertices relative to center, rotate them, then translate back
+        def rotate_point(p: vec3) -> vec3:
+            p_centered = p - center
+            p_rotated = rotate_y(p_centered, theta)
+            return p_rotated + center
+
+        # Rotate the delta vectors
+        dx = rotate_y(dx, theta)
+        dy_rot = rotate_y(dy, theta)
+        dz = rotate_y(dz, theta)
+
+        # Rotate and add the quads
+        sides.add(quad(rotate_point(vec3(min_pt.x, min_pt.y, max_pt.z)),  dx,  dy_rot, mat))  # front
+        sides.add(quad(rotate_point(vec3(max_pt.x, min_pt.y, max_pt.z)), -dz,  dy_rot, mat))  # right
+        sides.add(quad(rotate_point(vec3(max_pt.x, min_pt.y, min_pt.z)), -dx,  dy_rot, mat))  # back
+        sides.add(quad(rotate_point(vec3(min_pt.x, min_pt.y, min_pt.z)),  dz,  dy_rot, mat))  # left
+        sides.add(quad(rotate_point(vec3(min_pt.x, max_pt.y, max_pt.z)),  dx, -dz, mat))  # top
+        sides.add(quad(rotate_point(vec3(min_pt.x, min_pt.y, min_pt.z)),  dx,  dz, mat))  # bottom
+    else:
+        # No rotation - use original code
+        sides.add(quad(vec3(min_pt.x, min_pt.y, max_pt.z),  dx,  dy, mat))  # front
+        sides.add(quad(vec3(max_pt.x, min_pt.y, max_pt.z), -dz,  dy, mat))  # right
+        sides.add(quad(vec3(max_pt.x, min_pt.y, min_pt.z), -dx,  dy, mat))  # back
+        sides.add(quad(vec3(min_pt.x, min_pt.y, min_pt.z),  dz,  dy, mat))  # left
+        sides.add(quad(vec3(min_pt.x, max_pt.y, max_pt.z),  dx, -dz, mat))  # top
+        sides.add(quad(vec3(min_pt.x, min_pt.y, min_pt.z),  dx,  dz, mat))  # bottom
+
+    return sides
 
 #------------------------------------------------------------------------
 
@@ -834,12 +908,15 @@ def cornell_box():
     green = lambertian.from_color(color(0.12, 0.45, 0.15))
     light = diffuse_light.from_color(color(15, 15, 15))
 
-    world.add(quad(point3(555, 0, 0), vec3(0, 555, 0), vec3(0, 0, 555), green))
+    world.add(quad(point3(555, 0, 0), vec3(0, 0, 555), vec3(0, 555, 0), green))
     world.add(quad(point3(0, 0, 0), vec3(0, 555, 0), vec3(0, 0, 555), red))
     world.add(quad(point3(343, 554, 332), vec3(-130, 0, 0), vec3(0, 0, -105), light))
-    world.add(quad(point3(0, 0, 0), vec3(555, 0, 0), vec3(0, 0, 555), white))
+    world.add(quad(point3(0, 0, 0), vec3(0, 0, 555), vec3(555, 0, 0), white))
     world.add(quad(point3(555, 555, 555), vec3(-555, 0, 0), vec3(0, 0, -555), white))
-    world.add(quad(point3(0, 0, 555), vec3(555, 0, 0), vec3(0, 555, 0), white))
+    world.add(quad(point3(0, 0, 555), vec3(0, 555, 0), vec3(555, 0, 0), white))
+
+    world.add(box(point3(130, 0, 65), point3(295, 165, 230), white, -18))
+    world.add(box(point3(265, 0, 295), point3(430, 330, 460), white, 15))
 
     # Create BVH and wrap it
     bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
@@ -849,8 +926,8 @@ def cornell_box():
     cam = camera()
 
     cam.aspect_ratio = 1.0
-    cam.img_width = 100
-    cam.samples_per_pixel = 100
+    cam.img_width = 800  # Lower resolution for faster interactive response
+    cam.samples_per_pixel = 500  # 100 samples is good for interactive viewing
 
     cam.vfov = 40
     cam.lookfrom = point3(278, 278, -800)
@@ -859,15 +936,33 @@ def cornell_box():
 
     cam.defocus_angle = 0
 
-    renderer = RendererFactory.create(
-        'taichi',  # Change to 'cpu' for CPU renderer
-        world,
-        cam,
-        "../temp/cornell_box.ppm"
-    )
+#-------------------------------------------------------
+    # Use Interactive GPU renderer with mouse-controlled camera:
+    from render_server.interactive_viewer import InteractiveViewer
+
+    renderer = InteractiveViewer(world, cam, "../temp/cornell_box.ppm")
     renderer.background_color = color(0, 0, 0)
     renderer.max_depth = 50
-    renderer.render()
+
+    print("\n" + "="*60)
+    print("INTERACTIVE CORNELL BOX")
+    print("="*60)
+    print("Controls:")
+    print("  • Left-click + drag: Rotate camera around the scene")
+    print("  • Horizontal drag: Rotate left/right (yaw)")
+    print("  • Vertical drag: Rotate up/down (pitch)")
+    print("  • Camera resets samples when rotated")
+    print("="*60 + "\n")
+
+    renderer.render_interactive()
+#-------------------------------------------------------
+    # CPU Render:
+    # cam.max_depth = 10
+    # cam.background = color(0, 0, 0)
+    # cam.russian_roulette_enabled = False
+    # print("\nRendering scene...")
+    # cam.render(world, "../temp/cornell_box.ppm")
+    # print("✓ Done! Check ../temp/cornell_box.ppm")
 
 #------------------------------------------------------------------------
 
