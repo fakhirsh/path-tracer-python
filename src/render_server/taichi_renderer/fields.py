@@ -102,18 +102,27 @@ texture_type = ti.field(ti.i32, MAX_SPHERES)
 texture_scale = ti.field(ti.f32, MAX_SPHERES)      # Checker scale
 texture_color1 = ti.Vector.field(3, ti.f32, MAX_SPHERES)  # Primary/even color
 texture_color2 = ti.Vector.field(3, ti.f32, MAX_SPHERES)  # Secondary/odd color
+texture_image_idx = ti.field(ti.i32, MAX_SPHERES)  # Index into image texture array (-1 if not used)
 
 # Quad Textures
 quad_texture_type = ti.field(ti.i32, MAX_QUADS)
 quad_texture_scale = ti.field(ti.f32, MAX_QUADS)
 quad_texture_color1 = ti.Vector.field(3, ti.f32, MAX_QUADS)
 quad_texture_color2 = ti.Vector.field(3, ti.f32, MAX_QUADS)
+quad_texture_image_idx = ti.field(ti.i32, MAX_QUADS)  # Index into image texture array (-1 if not used)
 
 # Triangle Textures
 triangle_texture_type = ti.field(ti.i32, MAX_TRIANGLES)
 triangle_texture_scale = ti.field(ti.f32, MAX_TRIANGLES)
 triangle_texture_color1 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
 triangle_texture_color2 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
+triangle_texture_image_idx = ti.field(ti.i32, MAX_TRIANGLES)  # Index into image texture array (-1 if not used)
+
+# Image Textures - Global storage for loaded images
+# These will be allocated dynamically based on how many unique images are used
+MAX_IMAGE_TEXTURES = 16  # Support up to 16 unique image textures
+image_textures = []  # List of ti.Vector.field objects, one per loaded image
+image_texture_dims = ti.Vector.field(2, ti.i32, MAX_IMAGE_TEXTURES)  # [width, height] for each image
 
 # =============================================================================
 # CAMERA

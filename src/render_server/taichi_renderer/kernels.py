@@ -65,6 +65,37 @@ def random_cosine_direction(normal: ti.math.vec3) -> ti.math.vec3:
 
 
 # =============================================================================
+# TEXTURE UV CALCULATION
+# =============================================================================
+
+@ti.func
+def get_sphere_uv(p: ti.math.vec3, center: ti.math.vec3) -> tuple:
+    """
+    Calculate UV coordinates for a point on a sphere surface.
+    p: point on sphere surface
+    center: center of sphere
+    Returns: (u, v) in [0,1] x [0,1]
+
+    UV mapping:
+    - u: azimuthal angle (longitude), 0 at -X, increases counterclockwise viewed from +Y
+    - v: polar angle (latitude), 0 at -Y (south pole), 1 at +Y (north pole)
+    """
+    # Get outward normal (point relative to center, normalized)
+    outward_normal = (p - center).normalized()
+
+    # Convert to spherical coordinates
+    # theta: angle around Y axis (azimuthal, 0 to 2π)
+    # phi: angle from -Y axis (polar, 0 to π)
+    phi = ti.acos(-outward_normal.y)
+    theta = ti.atan2(-outward_normal.z, outward_normal.x) + math.pi
+
+    u = theta / (2.0 * math.pi)
+    v = phi / math.pi
+
+    return u, v
+
+
+# =============================================================================
 # RAY GENERATION
 # =============================================================================
 
@@ -681,7 +712,7 @@ def eval_texture(prim_type: ti.i32, prim_idx: ti.i32, hit_point: ti.math.vec3) -
     Evaluate texture at hit point.
     Returns: RGB color
 
-    Handles: solid color, checker pattern.
+    Handles: solid color, checker pattern, image texture.
     Uses prim_type to access correct texture arrays.
     """
     # Get texture type and colors based on primitive type
@@ -689,22 +720,26 @@ def eval_texture(prim_type: ti.i32, prim_idx: ti.i32, hit_point: ti.math.vec3) -
     color1 = ti.math.vec3(1.0)
     color2 = ti.math.vec3(1.0)
     scale = 1.0
+    img_idx = -1
 
     if prim_type == 0:  # PRIM_SPHERE
         tex_type = fields.texture_type[prim_idx]
         color1 = fields.texture_color1[prim_idx]
         color2 = fields.texture_color2[prim_idx]
         scale = fields.texture_scale[prim_idx]
+        img_idx = fields.texture_image_idx[prim_idx]
     elif prim_type == 1:  # PRIM_TRIANGLE
         tex_type = fields.triangle_texture_type[prim_idx]
         color1 = fields.triangle_texture_color1[prim_idx]
         color2 = fields.triangle_texture_color2[prim_idx]
         scale = fields.triangle_texture_scale[prim_idx]
+        img_idx = fields.triangle_texture_image_idx[prim_idx]
     elif prim_type == 2:  # PRIM_QUAD
         tex_type = fields.quad_texture_type[prim_idx]
         color1 = fields.quad_texture_color1[prim_idx]
         color2 = fields.quad_texture_color2[prim_idx]
         scale = fields.quad_texture_scale[prim_idx]
+        img_idx = fields.quad_texture_image_idx[prim_idx]
 
     result = ti.math.vec3(1.0, 1.0, 1.0)
 
@@ -723,6 +758,40 @@ def eval_texture(prim_type: ti.i32, prim_idx: ti.i32, hit_point: ti.math.vec3) -
             result = color1
         else:
             result = color2
+    elif tex_type == 2:  # TEX_IMAGE
+        # Get sphere center for UV calculation (only for spheres currently)
+        if prim_type == 0:  # PRIM_SPHERE
+            sphere_vec4 = fields.sphere_data[prim_idx]
+            center = ti.math.vec3(sphere_vec4[0], sphere_vec4[1], sphere_vec4[2])
+
+            # Calculate UV coordinates
+            u, v = get_sphere_uv(hit_point, center)
+
+            # Get image dimensions
+            dims = fields.image_texture_dims[img_idx]
+            img_width = dims[0]
+            img_height = dims[1]
+
+            # Clamp UV to [0,1]
+            u = ti.max(0.0, ti.min(1.0, u))
+            v = 1.0 - ti.max(0.0, ti.min(1.0, v))  # Flip V to image coordinates
+
+            # Convert to pixel coordinates
+            i = ti.cast(u * ti.cast(img_width, ti.f32), ti.i32)
+            j = ti.cast(v * ti.cast(img_height, ti.f32), ti.i32)
+
+            # Clamp pixel coordinates
+            i = ti.max(0, ti.min(img_width - 1, i))
+            j = ti.max(0, ti.min(img_height - 1, j))
+
+            # Sample texture using static dispatch
+            # Taichi doesn't support dynamic list indexing, so we use compile-time iteration
+            for tex_idx in ti.static(range(len(fields.image_textures))):
+                if img_idx == tex_idx:
+                    result = fields.image_textures[tex_idx][j, i]
+        else:
+            # For non-sphere primitives, return magenta as debug color
+            result = ti.math.vec3(1.0, 0.0, 1.0)
 
     return result
 

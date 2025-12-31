@@ -73,7 +73,7 @@ class TaichiRenderer:
 
         # Compile scene
         t0 = time.time()
-        geometry_data, material_data, spheres, quad_geometry_data, quad_material_data, quads, triangle_geometry_data, triangle_material_data, triangles = compile_scene(world)
+        geometry_data, material_data, spheres, quad_geometry_data, quad_material_data, quads, triangle_geometry_data, triangle_material_data, triangles, image_texture_registry, image_texture_list = compile_scene(world)
         self.timing['scene_compile'] = time.time() - t0
 
         # Compile BVH
@@ -84,15 +84,18 @@ class TaichiRenderer:
 
         # Upload to GPU
         t0 = time.time()
-        self._upload_to_gpu(geometry_data, material_data, quad_geometry_data, quad_material_data, triangle_geometry_data, triangle_material_data, bvh_data)
+        self._upload_to_gpu(geometry_data, material_data, quad_geometry_data, quad_material_data, triangle_geometry_data, triangle_material_data, bvh_data, image_texture_list)
         self._upload_camera()
         self.timing['gpu_upload'] = time.time() - t0
         self.timing['camera_upload'] = self.timing['gpu_upload']  # Alias for compatibility
 
         self.timing['total_setup'] = time.time() - setup_start
 
-    def _upload_to_gpu(self, geometry: dict, materials: dict, quad_geometry: dict, quad_materials: dict, triangle_geometry: dict, triangle_materials: dict, bvh: dict):
+    def _upload_to_gpu(self, geometry: dict, materials: dict, quad_geometry: dict, quad_materials: dict, triangle_geometry: dict, triangle_materials: dict, bvh: dict, image_textures: list):
         """Upload compiled numpy arrays to Taichi fields"""
+        import taichi as ti
+        import numpy as np
+
         # Sphere Geometry
         n = geometry['num_spheres']
         for i in range(n):
@@ -112,6 +115,7 @@ class TaichiRenderer:
             fields.texture_scale[i] = materials['texture_scale'][i]
             fields.texture_color1[i] = materials['texture_color1'][i]
             fields.texture_color2[i] = materials['texture_color2'][i]
+            fields.texture_image_idx[i] = materials['texture_image_idx'][i]
 
         # Quad Geometry
         nq = quad_geometry['num_quads']
@@ -137,6 +141,7 @@ class TaichiRenderer:
             fields.quad_texture_scale[i] = quad_materials['texture_scale'][i]
             fields.quad_texture_color1[i] = quad_materials['texture_color1'][i]
             fields.quad_texture_color2[i] = quad_materials['texture_color2'][i]
+            fields.quad_texture_image_idx[i] = quad_materials['texture_image_idx'][i]
 
         # Triangle Geometry
         nt = triangle_geometry['num_triangles']
@@ -162,6 +167,21 @@ class TaichiRenderer:
             fields.triangle_texture_scale[i] = triangle_materials['texture_scale'][i]
             fields.triangle_texture_color1[i] = triangle_materials['texture_color1'][i]
             fields.triangle_texture_color2[i] = triangle_materials['texture_color2'][i]
+            fields.triangle_texture_image_idx[i] = triangle_materials['texture_image_idx'][i]
+
+        # Image Textures - Upload texture data to GPU
+        fields.image_textures.clear()  # Clear previous textures
+        for idx, img_tex in enumerate(image_textures):
+            if img_tex.image.fdata is not None:
+                height, width, _ = img_tex.image.fdata.shape
+                # Create Taichi field for this texture
+                tex_field = ti.Vector.field(3, ti.f32, shape=(height, width))
+                # Upload image data
+                tex_field.from_numpy(img_tex.image.fdata)
+                # Store field in list
+                fields.image_textures.append(tex_field)
+                # Store dimensions
+                fields.image_texture_dims[idx] = [width, height]
 
         # BVH - Upload to PACKED structure (new optimized format)
         bvh_n = bvh['num_bvh_nodes']

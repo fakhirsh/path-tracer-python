@@ -412,7 +412,7 @@ def vol2_sec4_6():
 
 #------------------------------------------------------------------------
 
-def vol2_sec4_6_ver2():
+def vol2_sec4_6_ver2_cpu():
     world = hittable_list()
 
     # Ground plane (large sphere below)
@@ -453,6 +453,56 @@ def vol2_sec4_6_ver2():
     cam.background = color(0.70, 0.80, 1.00)
 
     cam.render(world, "../temp/vol2_sec4_6_ver2.ppm")
+
+#------------------------------------------------------------------------
+
+def vol2_sec4_6_ver2():
+    """Earth texture test scene - Taichi GPU renderer version - Interactive"""
+    world = hittable_list()
+
+    # Ground plane (large sphere below)
+    ground_material = lambertian.from_color(color(0.5, 0.5, 0.5))
+    world.add(Sphere.stationary(point3(0, -1000, 0), 1000, ground_material))
+
+    # LEFT: Solid texture sphere (red)
+    red_material = lambertian.from_texture(solid_color.from_color(color(0.8, 0.3, 0.3)))
+    world.add(Sphere.stationary(point3(-1, 0.5, 0), 0.5, red_material))
+
+    # CENTER: Earth textured sphere
+    earth_texture = image_texture("assets/images/earthmap.jpg")
+    earth_material = lambertian.from_texture(earth_texture)
+    world.add(Sphere.stationary(point3(0, 0.5, 0), 0.5, earth_material))
+
+    # RIGHT: Checker texture sphere
+    blue_material = lambertian.from_texture(checker_texture.from_colors(0.2, color(0.2, 0.3, 0.8), color(0.9, 0.9, 0.9)))
+    world.add(Sphere.stationary(point3(1, 0.5, 0), 0.5, blue_material))
+
+    # Create BVH and wrap it
+    bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
+    world = hittable_list()
+    world.add(bvh)
+
+    cam = camera()
+
+    cam.aspect_ratio = 16.0 / 9.0
+    cam.img_width = 800
+    cam.samples_per_pixel = 1000
+    cam.max_depth = 50
+
+    cam.vfov = 20
+    cam.lookfrom = point3(0, 1, -5)  # Looking from slightly above
+    cam.lookat = point3(0, 0.5, 0)   # Looking at center sphere
+    cam.vup = vec3(0, 1, 0)
+    cam.defocus_angle = 0.0
+    cam.background = color(0.70, 0.80, 1.00)
+
+    # Use interactive viewer
+    viewer = InteractiveViewer(
+        world,
+        cam,
+        "../temp/vol2_sec4_6_ver2_taichi.ppm"
+    )
+    viewer.render_interactive()
 
 #------------------------------------------------------------------------
 

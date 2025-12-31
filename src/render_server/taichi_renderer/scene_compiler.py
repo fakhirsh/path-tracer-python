@@ -19,6 +19,7 @@ MAT_DIELECTRIC = 2
 # Texture type constants
 TEX_SOLID = 0
 TEX_CHECKER = 1
+TEX_IMAGE = 2
 
 
 def extract_spheres(world) -> List:
@@ -213,9 +214,13 @@ def compile_triangle_geometry(triangles: List) -> Dict[str, np.ndarray]:
     }
 
 
-def compile_materials(spheres: List) -> Dict[str, np.ndarray]:
+def compile_materials(spheres: List, image_texture_registry: Dict = None) -> Dict[str, np.ndarray]:
     """
     Extract material properties from spheres.
+
+    Args:
+        spheres: List of sphere objects
+        image_texture_registry: Dict mapping image_texture objects to their GPU indices
 
     Returns dict with:
         'material_type': np.ndarray of shape (N,) dtype=int32
@@ -226,8 +231,11 @@ def compile_materials(spheres: List) -> Dict[str, np.ndarray]:
         'texture_scale': np.ndarray of shape (N,) dtype=float32
         'texture_color1': np.ndarray of shape (N, 3) dtype=float32
         'texture_color2': np.ndarray of shape (N, 3) dtype=float32
+        'texture_image_idx': np.ndarray of shape (N,) dtype=int32
     """
     n = len(spheres)
+    if image_texture_registry is None:
+        image_texture_registry = {}
 
     material_type = np.zeros(n, dtype=np.int32)
     material_albedo = np.zeros((n, 3), dtype=np.float32)
@@ -238,6 +246,7 @@ def compile_materials(spheres: List) -> Dict[str, np.ndarray]:
     texture_scale = np.ones(n, dtype=np.float32)
     texture_color1 = np.zeros((n, 3), dtype=np.float32)
     texture_color2 = np.zeros((n, 3), dtype=np.float32)
+    texture_image_idx = np.full(n, -1, dtype=np.int32)  # -1 means no image texture
 
     for i, sphere in enumerate(spheres):
         mat = sphere.material
@@ -263,6 +272,15 @@ def compile_materials(spheres: List) -> Dict[str, np.ndarray]:
 
                 # Set albedo to white (will be overridden by texture evaluation)
                 material_albedo[i] = [1.0, 1.0, 1.0]
+            elif tex_type_name == 'image_texture':
+                # Image texture - store reference to image
+                texture_type[i] = TEX_IMAGE
+                texture_image_idx[i] = image_texture_registry.get(id(mat.tex), -1)
+
+                # Set albedo to white (will be overridden by texture evaluation)
+                material_albedo[i] = [1.0, 1.0, 1.0]
+                texture_color1[i] = [1.0, 1.0, 1.0]
+                texture_color2[i] = [1.0, 1.0, 1.0]
             else:
                 # Solid color or other texture - sample once
                 texture_type[i] = TEX_SOLID
@@ -324,11 +342,12 @@ def compile_materials(spheres: List) -> Dict[str, np.ndarray]:
         'texture_type': texture_type,
         'texture_scale': texture_scale,
         'texture_color1': texture_color1,
-        'texture_color2': texture_color2
+        'texture_color2': texture_color2,
+        'texture_image_idx': texture_image_idx
     }
 
 
-def compile_quad_materials(quads: List) -> Dict[str, np.ndarray]:
+def compile_quad_materials(quads: List, image_texture_registry: Dict = None) -> Dict[str, np.ndarray]:
     """
     Extract material properties from quads.
     Similar to compile_materials but for quads.
@@ -344,6 +363,8 @@ def compile_quad_materials(quads: List) -> Dict[str, np.ndarray]:
         'texture_color2': np.ndarray of shape (N, 3) dtype=float32
     """
     n = len(quads)
+    if image_texture_registry is None:
+        image_texture_registry = {}
 
     material_type = np.zeros(n, dtype=np.int32)
     material_albedo = np.zeros((n, 3), dtype=np.float32)
@@ -354,6 +375,7 @@ def compile_quad_materials(quads: List) -> Dict[str, np.ndarray]:
     texture_scale = np.ones(n, dtype=np.float32)
     texture_color1 = np.zeros((n, 3), dtype=np.float32)
     texture_color2 = np.zeros((n, 3), dtype=np.float32)
+    texture_image_idx = np.full(n, -1, dtype=np.int32)
 
     for i, q in enumerate(quads):
         mat = q.mat
@@ -380,6 +402,15 @@ def compile_quad_materials(quads: List) -> Dict[str, np.ndarray]:
 
                 # Set albedo to white (will be overridden by texture evaluation)
                 material_albedo[i] = [1.0, 1.0, 1.0]
+            elif tex_type_name == 'image_texture':
+                # Image texture - store reference to image
+                texture_type[i] = TEX_IMAGE
+                texture_image_idx[i] = image_texture_registry.get(id(mat.tex), -1)
+
+                # Set albedo to white (will be overridden by texture evaluation)
+                material_albedo[i] = [1.0, 1.0, 1.0]
+                texture_color1[i] = [1.0, 1.0, 1.0]
+                texture_color2[i] = [1.0, 1.0, 1.0]
             else:
                 # Solid color or other texture - sample once
                 texture_type[i] = TEX_SOLID
@@ -441,11 +472,12 @@ def compile_quad_materials(quads: List) -> Dict[str, np.ndarray]:
         'texture_type': texture_type,
         'texture_scale': texture_scale,
         'texture_color1': texture_color1,
-        'texture_color2': texture_color2
+        'texture_color2': texture_color2,
+        'texture_image_idx': texture_image_idx
     }
 
 
-def compile_triangle_materials(triangles: List) -> Dict[str, np.ndarray]:
+def compile_triangle_materials(triangles: List, image_texture_registry: Dict = None) -> Dict[str, np.ndarray]:
     """
     Extract material properties from triangles.
     Similar to compile_materials but for triangles.
@@ -461,6 +493,8 @@ def compile_triangle_materials(triangles: List) -> Dict[str, np.ndarray]:
         'texture_color2': np.ndarray of shape (N, 3) dtype=float32
     """
     n = len(triangles)
+    if image_texture_registry is None:
+        image_texture_registry = {}
 
     material_type = np.zeros(n, dtype=np.int32)
     material_albedo = np.zeros((n, 3), dtype=np.float32)
@@ -471,6 +505,7 @@ def compile_triangle_materials(triangles: List) -> Dict[str, np.ndarray]:
     texture_scale = np.ones(n, dtype=np.float32)
     texture_color1 = np.zeros((n, 3), dtype=np.float32)
     texture_color2 = np.zeros((n, 3), dtype=np.float32)
+    texture_image_idx = np.full(n, -1, dtype=np.int32)
 
     for i, tri in enumerate(triangles):
         mat = tri.mat
@@ -497,6 +532,15 @@ def compile_triangle_materials(triangles: List) -> Dict[str, np.ndarray]:
 
                 # Set albedo to white (will be overridden by texture evaluation)
                 material_albedo[i] = [1.0, 1.0, 1.0]
+            elif tex_type_name == 'image_texture':
+                # Image texture - store reference to image
+                texture_type[i] = TEX_IMAGE
+                texture_image_idx[i] = image_texture_registry.get(id(mat.tex), -1)
+
+                # Set albedo to white (will be overridden by texture evaluation)
+                material_albedo[i] = [1.0, 1.0, 1.0]
+                texture_color1[i] = [1.0, 1.0, 1.0]
+                texture_color2[i] = [1.0, 1.0, 1.0]
             else:
                 # Solid color or other texture - sample once
                 texture_type[i] = TEX_SOLID
@@ -558,11 +602,54 @@ def compile_triangle_materials(triangles: List) -> Dict[str, np.ndarray]:
         'texture_type': texture_type,
         'texture_scale': texture_scale,
         'texture_color1': texture_color1,
-        'texture_color2': texture_color2
+        'texture_color2': texture_color2,
+        'texture_image_idx': texture_image_idx
     }
 
 
-def compile_scene(world) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List, Dict[str, np.ndarray], List, Dict[str, np.ndarray], List]:
+def build_image_texture_registry(world) -> Tuple[Dict[int, int], List]:
+    """
+    Build a registry of all unique image textures used in the scene.
+
+    Returns:
+        image_texture_registry: Dict mapping texture object id() to GPU index
+        image_texture_list: List of image_texture objects in order
+    """
+    from core.texture import image_texture
+    from core.hittable_list import hittable_list
+    from core.bvh_node import bvh_node
+    from core.sphere import Sphere
+    from core.quad import quad
+    from core.triangle import triangle
+
+    image_textures = {}  # id -> texture object
+
+    def extract_textures(obj):
+        """Recursively extract image textures from objects"""
+        if isinstance(obj, (Sphere, quad, triangle)):
+            if hasattr(obj, 'material') or hasattr(obj, 'mat'):
+                mat = obj.material if hasattr(obj, 'material') else obj.mat
+                if hasattr(mat, 'tex') and isinstance(mat.tex, image_texture):
+                    image_textures[id(mat.tex)] = mat.tex
+        elif isinstance(obj, hittable_list):
+            for item in obj.objects:
+                extract_textures(item)
+        elif isinstance(obj, bvh_node):
+            if obj.left is not None:
+                extract_textures(obj.left)
+            if obj.right is not None:
+                extract_textures(obj.right)
+
+    extract_textures(world)
+
+    # Build ordered list and registry
+    image_texture_list = list(image_textures.values())
+    image_texture_registry = {id(tex): i for i, tex in enumerate(image_texture_list)}
+
+    return image_texture_registry, image_texture_list
+
+
+def compile_scene(world) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List, Dict[str, np.ndarray], List, Dict[str, np.ndarray], List, Dict[int, int], List]:
     """
     Main entry point: compile entire scene.
 
@@ -577,17 +664,20 @@ def compile_scene(world) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], 
         triangle_materials: dict of numpy arrays (triangle materials)
         triangles: list of triangle objects (needed for BVH compiler)
     """
+    # Build image texture registry first
+    image_texture_registry, image_texture_list = build_image_texture_registry(world)
+
     spheres = extract_spheres(world)
     quads = extract_quads(world)
     triangles = extract_triangles(world)
 
     geometry = compile_geometry(spheres)
-    materials = compile_materials(spheres)
+    materials = compile_materials(spheres, image_texture_registry)
 
     quad_geometry = compile_quad_geometry(quads)
-    quad_materials = compile_quad_materials(quads)
+    quad_materials = compile_quad_materials(quads, image_texture_registry)
 
     triangle_geometry = compile_triangle_geometry(triangles)
-    triangle_materials = compile_triangle_materials(triangles)
+    triangle_materials = compile_triangle_materials(triangles, image_texture_registry)
 
-    return geometry, materials, spheres, quad_geometry, quad_materials, quads, triangle_geometry, triangle_materials, triangles
+    return geometry, materials, spheres, quad_geometry, quad_materials, quads, triangle_geometry, triangle_materials, triangles, image_texture_registry, image_texture_list
