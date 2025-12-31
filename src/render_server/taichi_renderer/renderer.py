@@ -113,8 +113,19 @@ class TaichiRenderer:
             fields.texture_color1[i] = materials['texture_color1'][i]
             fields.texture_color2[i] = materials['texture_color2'][i]
 
-        # BVH
+        # BVH - Upload to PACKED structure (new optimized format)
         bvh_n = bvh['num_bvh_nodes']
+        for i in range(bvh_n):
+            node = fields.bvh_nodes[i]
+            node.bbox_min = bvh['bvh_bbox_min'][i]
+            node.bbox_max = bvh['bvh_bbox_max'][i]
+            node.left_child = bvh['bvh_left_child'][i]
+            node.right_child = bvh['bvh_right_child'][i]
+            node.parent = bvh.get('bvh_parent', [-1] * bvh_n)[i]  # New: parent pointer
+            node.prim_type = bvh['bvh_prim_type'][i]
+            node.prim_idx = bvh['bvh_prim_idx'][i]
+
+        # Legacy fields (for backward compatibility - can be removed later)
         for i in range(bvh_n):
             fields.bvh_bbox_min[i] = bvh['bvh_bbox_min'][i]
             fields.bvh_bbox_max[i] = bvh['bvh_bbox_max'][i]
@@ -122,6 +133,7 @@ class TaichiRenderer:
             fields.bvh_right_child[i] = bvh['bvh_right_child'][i]
             fields.bvh_prim_type[i] = bvh['bvh_prim_type'][i]
             fields.bvh_prim_idx[i] = bvh['bvh_prim_idx'][i]
+
         fields.num_bvh_nodes[None] = bvh_n
 
     def _upload_camera(self):
