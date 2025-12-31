@@ -96,6 +96,73 @@ def get_sphere_uv(p: ti.math.vec3, center: ti.math.vec3) -> tuple:
 
 
 # =============================================================================
+# PERLIN NOISE
+# =============================================================================
+
+@ti.func
+def perlin_noise(p: ti.math.vec3) -> ti.f32:
+    """
+    Compute Perlin noise value at point p.
+    Returns value in approximately [-1, 1] range.
+    """
+    # Get integer and fractional parts
+    u = p.x - ti.floor(p.x)
+    v = p.y - ti.floor(p.y)
+    w = p.z - ti.floor(p.z)
+
+    i = ti.cast(ti.floor(p.x), ti.i32)
+    j = ti.cast(ti.floor(p.y), ti.i32)
+    k = ti.cast(ti.floor(p.z), ti.i32)
+
+    # Hermite smoothing
+    uu = u * u * (3.0 - 2.0 * u)
+    vv = v * v * (3.0 - 2.0 * v)
+    ww = w * w * (3.0 - 2.0 * w)
+
+    accum = 0.0
+
+    # Trilinear interpolation with dot product
+    for di in ti.static(range(2)):
+        for dj in ti.static(range(2)):
+            for dk in ti.static(range(2)):
+                # Hash the coordinates using permutation tables
+                idx = fields.perlin_perm_x[(i + di) & 255] ^ \
+                      fields.perlin_perm_y[(j + dj) & 255] ^ \
+                      fields.perlin_perm_z[(k + dk) & 255]
+
+                grad_vec = fields.perlin_randvec[idx]
+
+                weight = ti.math.vec3(u - ti.cast(di, ti.f32),
+                                     v - ti.cast(dj, ti.f32),
+                                     w - ti.cast(dk, ti.f32))
+
+                accum += (ti.cast(di, ti.f32) * uu + (1.0 - ti.cast(di, ti.f32)) * (1.0 - uu)) * \
+                         (ti.cast(dj, ti.f32) * vv + (1.0 - ti.cast(dj, ti.f32)) * (1.0 - vv)) * \
+                         (ti.cast(dk, ti.f32) * ww + (1.0 - ti.cast(dk, ti.f32)) * (1.0 - ww)) * \
+                         grad_vec.dot(weight)
+
+    return accum
+
+
+@ti.func
+def perlin_turb(p: ti.math.vec3, depth: ti.i32) -> ti.f32:
+    """
+    Turbulence function - sum of multiple octaves of noise.
+    Creates more complex patterns than single noise.
+    """
+    accum = 0.0
+    temp_p = p
+    weight = 1.0
+
+    for _ in range(depth):
+        accum += weight * perlin_noise(temp_p)
+        weight *= 0.5
+        temp_p = temp_p * 2.0
+
+    return ti.abs(accum)
+
+
+# =============================================================================
 # RAY GENERATION
 # =============================================================================
 
@@ -792,6 +859,12 @@ def eval_texture(prim_type: ti.i32, prim_idx: ti.i32, hit_point: ti.math.vec3) -
         else:
             # For non-sphere primitives, return magenta as debug color
             result = ti.math.vec3(1.0, 0.0, 1.0)
+    elif tex_type == 3:  # TEX_NOISE
+        # Perlin noise texture with turbulence and sine wave marble effect
+        # scale is stored in the scale field, color1 is base color
+        noise_val = ti.sin(scale * hit_point.z + 10.0 * perlin_turb(hit_point, 7))
+        # Map from [-1, 1] to [0, 1] and multiply by base color
+        result = color1 * 0.5 * (1.0 + noise_val)
 
     return result
 

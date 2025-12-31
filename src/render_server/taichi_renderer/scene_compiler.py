@@ -20,6 +20,7 @@ MAT_DIELECTRIC = 2
 TEX_SOLID = 0
 TEX_CHECKER = 1
 TEX_IMAGE = 2
+TEX_NOISE = 3
 
 
 def extract_spheres(world) -> List:
@@ -281,6 +282,17 @@ def compile_materials(spheres: List, image_texture_registry: Dict = None) -> Dic
                 material_albedo[i] = [1.0, 1.0, 1.0]
                 texture_color1[i] = [1.0, 1.0, 1.0]
                 texture_color2[i] = [1.0, 1.0, 1.0]
+            elif tex_type_name == 'noise_texture':
+                # Perlin noise texture - store scale
+                texture_type[i] = TEX_NOISE
+                texture_scale[i] = mat.tex.scale
+
+                # Base color (used in marble effect)
+                texture_color1[i] = [0.5, 0.5, 0.5]
+                texture_color2[i] = [0.5, 0.5, 0.5]
+
+                # Set albedo to white (will be overridden by texture evaluation)
+                material_albedo[i] = [1.0, 1.0, 1.0]
             else:
                 # Solid color or other texture - sample once
                 texture_type[i] = TEX_SOLID
@@ -411,6 +423,17 @@ def compile_quad_materials(quads: List, image_texture_registry: Dict = None) -> 
                 material_albedo[i] = [1.0, 1.0, 1.0]
                 texture_color1[i] = [1.0, 1.0, 1.0]
                 texture_color2[i] = [1.0, 1.0, 1.0]
+            elif tex_type_name == 'noise_texture':
+                # Perlin noise texture - store scale
+                texture_type[i] = TEX_NOISE
+                texture_scale[i] = mat.tex.scale
+
+                # Base color (used in marble effect)
+                texture_color1[i] = [0.5, 0.5, 0.5]
+                texture_color2[i] = [0.5, 0.5, 0.5]
+
+                # Set albedo to white (will be overridden by texture evaluation)
+                material_albedo[i] = [1.0, 1.0, 1.0]
             else:
                 # Solid color or other texture - sample once
                 texture_type[i] = TEX_SOLID
@@ -541,6 +564,17 @@ def compile_triangle_materials(triangles: List, image_texture_registry: Dict = N
                 material_albedo[i] = [1.0, 1.0, 1.0]
                 texture_color1[i] = [1.0, 1.0, 1.0]
                 texture_color2[i] = [1.0, 1.0, 1.0]
+            elif tex_type_name == 'noise_texture':
+                # Perlin noise texture - store scale
+                texture_type[i] = TEX_NOISE
+                texture_scale[i] = mat.tex.scale
+
+                # Base color (used in marble effect)
+                texture_color1[i] = [0.5, 0.5, 0.5]
+                texture_color2[i] = [0.5, 0.5, 0.5]
+
+                # Set albedo to white (will be overridden by texture evaluation)
+                material_albedo[i] = [1.0, 1.0, 1.0]
             else:
                 # Solid color or other texture - sample once
                 texture_type[i] = TEX_SOLID

@@ -125,6 +125,21 @@ image_textures = []  # List of ti.Vector.field objects, one per loaded image
 image_texture_dims = ti.Vector.field(2, ti.i32, MAX_IMAGE_TEXTURES)  # [width, height] for each image
 
 # =============================================================================
+# PERLIN NOISE DATA
+# =============================================================================
+
+# Perlin noise lookup tables (static, initialized once)
+PERLIN_POINT_COUNT = 256
+
+# Random vectors for Perlin noise
+perlin_randvec = ti.Vector.field(3, ti.f32, PERLIN_POINT_COUNT)
+
+# Permutation tables for x, y, z
+perlin_perm_x = ti.field(ti.i32, PERLIN_POINT_COUNT)
+perlin_perm_y = ti.field(ti.i32, PERLIN_POINT_COUNT)
+perlin_perm_z = ti.field(ti.i32, PERLIN_POINT_COUNT)
+
+# =============================================================================
 # CAMERA
 # =============================================================================
 
@@ -165,3 +180,20 @@ def clear_accumulation_buffer():
     """Clear accumulation buffer to zero"""
     for py, px in accum_buffer:
         accum_buffer[py, px] = ti.math.vec3(0.0)
+
+
+def init_perlin_noise(perlin_obj):
+    """
+    Initialize Perlin noise lookup tables from CPU perlin object.
+    This uploads the random vectors and permutation tables to GPU.
+    """
+    import numpy as np
+
+    # Upload random vectors
+    randvec_np = np.array([[v.x, v.y, v.z] for v in perlin_obj.randvec], dtype=np.float32)
+    perlin_randvec.from_numpy(randvec_np)
+
+    # Upload permutation tables
+    perlin_perm_x.from_numpy(np.array(perlin_obj.perm_x, dtype=np.int32))
+    perlin_perm_y.from_numpy(np.array(perlin_obj.perm_y, dtype=np.int32))
+    perlin_perm_z.from_numpy(np.array(perlin_obj.perm_z, dtype=np.int32))

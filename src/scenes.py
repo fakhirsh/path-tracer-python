@@ -566,7 +566,7 @@ def vol2_sec5():
 
     noise_material = lambertian.from_texture(pretext)
     world.add(Sphere.stationary(point3(0, 2, 0), 2, noise_material))
-    
+
     # Create BVH and wrap it
     bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
     world = hittable_list()
@@ -585,7 +585,16 @@ def vol2_sec5():
     cam.defocus_angle = 0.0
     cam.background = color(0.70, 0.80, 1.00)
 
-    cam.render(world, "../temp/vol2_sec5.ppm")
+    # Use Taichi GPU renderer
+    renderer = RendererFactory.create(
+        'taichi',
+        world,
+        cam,
+        "../temp/vol2_sec5.ppm"
+    )
+    renderer.background_color = color(0.70, 0.80, 1.00)
+    renderer.max_depth = 10
+    renderer.render()
 
 #------------------------------------------------------------------------
 

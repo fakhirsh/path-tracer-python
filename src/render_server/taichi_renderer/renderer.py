@@ -71,6 +71,11 @@ class TaichiRenderer:
         # Allocate dynamic fields
         fields.allocate_dynamic_fields(self.cam.img_width, self.cam.img_height)
 
+        # Initialize Perlin noise (only needs to be done once)
+        from core.perlin import perlin
+        perlin_instance = perlin()
+        fields.init_perlin_noise(perlin_instance)
+
         # Compile scene
         t0 = time.time()
         geometry_data, material_data, spheres, quad_geometry_data, quad_material_data, quads, triangle_geometry_data, triangle_material_data, triangles, image_texture_registry, image_texture_list = compile_scene(world)
