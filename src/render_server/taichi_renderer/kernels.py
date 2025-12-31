@@ -191,10 +191,53 @@ def hit_quad(quad_idx: ti.i32, ray_origin: ti.math.vec3, ray_dir: ti.math.vec3,
     """
     Test ray-quad intersection.
     Returns: (hit, t, hit_point, normal)
-    FOR FUTURE USE - implement skeleton now.
+
+    Algorithm:
+    1. Test ray against quad's plane
+    2. Check if intersection point lies within quad boundaries using planar coordinates
     """
-    # Return no-hit for now
-    return False, 0.0, ti.math.vec3(0.0), ti.math.vec3(0.0)
+    # Get quad data
+    Q = fields.quad_Q[quad_idx]
+    u = fields.quad_u[quad_idx]
+    v = fields.quad_v[quad_idx]
+    normal = fields.quad_normal[quad_idx]
+    D = fields.quad_D[quad_idx]
+    w = fields.quad_w[quad_idx]
+
+    # Check if ray is parallel to quad
+    denom = normal.dot(ray_dir)
+
+    hit = False
+    t = 0.0
+    hit_point = ti.math.vec3(0.0)
+    hit_normal = ti.math.vec3(0.0)
+
+    if ti.abs(denom) >= 1e-8:
+        # Compute intersection with plane
+        t_temp = (D - normal.dot(ray_origin)) / denom
+
+        if t_temp >= t_min and t_temp <= t_max:
+            # Determine if hit point lies within the planar shape
+            intersection = ray_origin + t_temp * ray_dir
+            planar_hitpt_vector = intersection - Q
+            alpha = w.dot(planar_hitpt_vector.cross(v))
+            beta = w.dot(u.cross(planar_hitpt_vector))
+
+            # Check if inside unit square (0 <= alpha, beta <= 1)
+            if alpha >= 0.0 and alpha <= 1.0 and beta >= 0.0 and beta <= 1.0:
+                hit = True
+                t = t_temp
+                hit_point = intersection
+
+                # Determine front/back face
+                if denom < 0.0:
+                    # Front face
+                    hit_normal = normal
+                else:
+                    # Back face
+                    hit_normal = -normal
+
+    return hit, t, hit_point, hit_normal
 
 
 @ti.func
@@ -212,12 +255,13 @@ def traverse_bvh_stackless(ray_origin: ti.math.vec3, ray_dir: ti.math.vec3,
     3. If no right sibling, ascend to parent and continue
     4. Track which child we came from to avoid revisiting
 
-    Returns: (hit, t, hit_point, normal, primitive_idx)
+    Returns: (hit, t, hit_point, normal, prim_type, prim_idx)
     """
     hit_anything = False
     closest_t = t_max
     closest_hit_point = ti.math.vec3(0.0)
     closest_normal = ti.math.vec3(0.0)
+    closest_prim_type = 0
     closest_prim_idx = 0
 
     # Precompute inverse ray direction for AABB tests (5-8% speedup)
@@ -309,6 +353,7 @@ def traverse_bvh_stackless(ray_origin: ti.math.vec3, ray_dir: ti.math.vec3,
                 closest_t = t
                 closest_hit_point = hit_point
                 closest_normal = normal
+                closest_prim_type = node.prim_type
                 closest_prim_idx = node.prim_idx
 
             # After testing leaf, ascend to parent
@@ -339,7 +384,7 @@ def traverse_bvh_stackless(ray_origin: ti.math.vec3, ray_dir: ti.math.vec3,
                     else:
                         break
 
-    return hit_anything, closest_t, closest_hit_point, closest_normal, closest_prim_idx
+    return hit_anything, closest_t, closest_hit_point, closest_normal, closest_prim_type, closest_prim_idx
 
 
 @ti.func
@@ -378,6 +423,7 @@ def traverse_bvh_legacy(ray_origin: ti.math.vec3, ray_dir: ti.math.vec3,
     closest_t = t_max
     closest_hit_point = ti.math.vec3(0.0)
     closest_normal = ti.math.vec3(0.0)
+    closest_prim_type = 0
     closest_prim_idx = 0
 
     # Stack-based iterative BVH traversal
@@ -427,6 +473,7 @@ def traverse_bvh_legacy(ray_origin: ti.math.vec3, ray_dir: ti.math.vec3,
                 closest_t = t
                 closest_hit_point = hit_point
                 closest_normal = normal
+                closest_prim_type = prim_type
                 closest_prim_idx = prim_idx
         else:
             # Internal node - add children to stack
@@ -441,7 +488,7 @@ def traverse_bvh_legacy(ray_origin: ti.math.vec3, ray_dir: ti.math.vec3,
                 stack[stack_ptr] = left_child
                 stack_ptr += 1
 
-    return hit_anything, closest_t, closest_hit_point, closest_normal, closest_prim_idx
+    return hit_anything, closest_t, closest_hit_point, closest_normal, closest_prim_type, closest_prim_idx
 
 
 # Toggle between stackless and legacy traversal
@@ -490,31 +537,48 @@ def reflectance(cosine: ti.f32, ref_idx: ti.f32) -> ti.f32:
 
 @ti.func
 def scatter(ray_dir: ti.math.vec3, hit_point: ti.math.vec3, normal: ti.math.vec3,
-            prim_idx: ti.i32) -> tuple:
+            prim_type: ti.i32, prim_idx: ti.i32) -> tuple:
     """
     Compute scattered ray based on material type.
     Returns: (did_scatter, scatter_direction, attenuation)
 
-    Dispatches to Lambertian, Metal, or Dielectric based on material_type[prim_idx].
+    Dispatches to Lambertian, Metal, or Dielectric based on material type.
+    Uses prim_type (0=sphere, 2=quad) to access correct material arrays.
     """
-    mat_type = fields.material_type[prim_idx]
+    # Get material type based on primitive type
+    mat_type = 0
+    if prim_type == 0:  # PRIM_SPHERE
+        mat_type = fields.material_type[prim_idx]
+    elif prim_type == 2:  # PRIM_QUAD
+        mat_type = fields.quad_material_type[prim_idx]
+
     scatter_dir = ti.math.vec3(0.0)
     attenuation = ti.math.vec3(1.0)
     scattered = False
 
+    # Declare variables in outer scope for Taichi
+    albedo = ti.math.vec3(1.0)
+    fuzz = 0.0
+    ir = 1.0
+
     # LAMBERTIAN material
     if mat_type == 0:
         # Evaluate texture at hit point to get albedo
-        albedo = eval_texture(prim_idx, hit_point)
+        albedo = eval_texture(prim_type, prim_idx, hit_point)
         scatter_dir = random_cosine_direction(normal)
         attenuation = albedo
         scattered = True
 
     # METAL material
     elif mat_type == 1:
-        albedo = fields.material_albedo[prim_idx]
+        if prim_type == 0:  # PRIM_SPHERE
+            albedo = fields.material_albedo[prim_idx]
+            fuzz = fields.material_fuzz[prim_idx]
+        else:  # PRIM_QUAD
+            albedo = fields.quad_material_albedo[prim_idx]
+            fuzz = fields.quad_material_fuzz[prim_idx]
+
         reflected = reflect(ray_dir.normalized(), normal)
-        fuzz = fields.material_fuzz[prim_idx]
         scatter_dir = reflected + fuzz * random_unit_vector()
 
         # Only scatter if ray is reflected outward
@@ -524,7 +588,10 @@ def scatter(ray_dir: ti.math.vec3, hit_point: ti.math.vec3, normal: ti.math.vec3
 
     # DIELECTRIC material (glass)
     elif mat_type == 2:
-        ir = fields.material_ir[prim_idx]
+        if prim_type == 0:  # PRIM_SPHERE
+            ir = fields.material_ir[prim_idx]
+        else:  # PRIM_QUAD
+            ir = fields.quad_material_ir[prim_idx]
 
         # Determine if ray is entering or exiting
         front_face = ray_dir.dot(normal) < 0.0
@@ -555,22 +622,38 @@ def scatter(ray_dir: ti.math.vec3, hit_point: ti.math.vec3, normal: ti.math.vec3
 # =============================================================================
 
 @ti.func
-def eval_texture(prim_idx: ti.i32, hit_point: ti.math.vec3) -> ti.math.vec3:
+def eval_texture(prim_type: ti.i32, prim_idx: ti.i32, hit_point: ti.math.vec3) -> ti.math.vec3:
     """
     Evaluate texture at hit point.
     Returns: RGB color
 
     Handles: solid color, checker pattern.
-    Uses texture_type[prim_idx] to dispatch.
+    Uses prim_type to access correct texture arrays.
     """
-    tex_type = fields.texture_type[prim_idx]
+    # Get texture type and colors based on primitive type
+    tex_type = 0
+    color1 = ti.math.vec3(1.0)
+    color2 = ti.math.vec3(1.0)
+    scale = 1.0
+
+    if prim_type == 0:  # PRIM_SPHERE
+        tex_type = fields.texture_type[prim_idx]
+        color1 = fields.texture_color1[prim_idx]
+        color2 = fields.texture_color2[prim_idx]
+        scale = fields.texture_scale[prim_idx]
+    elif prim_type == 2:  # PRIM_QUAD
+        tex_type = fields.quad_texture_type[prim_idx]
+        color1 = fields.quad_texture_color1[prim_idx]
+        color2 = fields.quad_texture_color2[prim_idx]
+        scale = fields.quad_texture_scale[prim_idx]
+
     result = ti.math.vec3(1.0, 1.0, 1.0)
 
     if tex_type == 0:  # TEX_SOLID
-        result = fields.texture_color1[prim_idx]
+        result = color1
     elif tex_type == 1:  # TEX_CHECKER
         # Checker pattern based on 3D position
-        inv_scale = 1.0 / fields.texture_scale[prim_idx]
+        inv_scale = 1.0 / scale
         x_int = ti.floor(inv_scale * hit_point.x)
         y_int = ti.floor(inv_scale * hit_point.y)
         z_int = ti.floor(inv_scale * hit_point.z)
@@ -578,9 +661,9 @@ def eval_texture(prim_idx: ti.i32, hit_point: ti.math.vec3) -> ti.math.vec3:
         is_even = (ti.cast(x_int, ti.i32) + ti.cast(y_int, ti.i32) + ti.cast(z_int, ti.i32)) % 2 == 0
 
         if is_even:
-            result = fields.texture_color1[prim_idx]
+            result = color1
         else:
-            result = fields.texture_color2[prim_idx]
+            result = color2
 
     return result
 
@@ -611,14 +694,14 @@ def trace_ray(ray_origin: ti.math.vec3, ray_dir: ti.math.vec3) -> ti.math.vec3:
     # Iterative path tracing loop (instead of recursion)
     for depth in range(fields.max_depth[None]):
         # Test for intersection with scene
-        hit, t, hit_point, normal, prim_idx = traverse_bvh(
+        hit, t, hit_point, normal, prim_type, prim_idx = traverse_bvh(
             current_origin, current_dir, 0.001, 1e10
         )
 
         if hit:
             # Material scattering
             scattered, scatter_dir, attenuation = scatter(
-                current_dir, hit_point, normal, prim_idx
+                current_dir, hit_point, normal, prim_type, prim_idx
             )
 
             if scattered:

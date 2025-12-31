@@ -28,6 +28,16 @@ class AABB:
         extent = self.max - self.min
         return 2.0 * (extent[0] * extent[1] + extent[1] * extent[2] + extent[2] * extent[0])
 
+    def pad_to_minimums(self):
+        """Pad thin dimensions to avoid numerical issues (same as core/aabb.py)"""
+        delta = 0.0001
+        for axis in range(3):
+            if self.max[axis] - self.min[axis] < delta:
+                # Expand equally on both sides
+                mid = (self.min[axis] + self.max[axis]) / 2.0
+                self.min[axis] = mid - delta / 2.0
+                self.max[axis] = mid + delta / 2.0
+
     def union(self, other: 'AABB') -> 'AABB':
         """Compute bounding box that contains both AABBs"""
         return AABB(
@@ -102,6 +112,33 @@ class SAHBVHBuilder:
             prim_idx=sphere_idx,
             bbox=bbox,
             centroid=center.copy()
+        )
+        self.primitives.append(prim)
+
+    def add_quad(self, quad_idx: int, Q: np.ndarray, u: np.ndarray, v: np.ndarray):
+        """Add a quad primitive to the builder"""
+        # Compute bounding box from the four corners of the quad
+        corners = [
+            Q,
+            Q + u,
+            Q + v,
+            Q + u + v
+        ]
+        min_corner = np.min(corners, axis=0)
+        max_corner = np.max(corners, axis=0)
+
+        bbox = AABB(min=min_corner, max=max_corner)
+        # Pad thin dimensions to avoid numerical issues (quads are often planar)
+        bbox.pad_to_minimums()
+
+        # Centroid is the center of the quad
+        centroid = Q + 0.5 * u + 0.5 * v
+
+        prim = Primitive(
+            prim_type=PRIM_QUAD,
+            prim_idx=quad_idx,
+            bbox=bbox,
+            centroid=centroid.copy()
         )
         self.primitives.append(prim)
 
@@ -373,6 +410,38 @@ def build_sah_bvh_from_spheres(spheres: List) -> Dict[str, np.ndarray]:
         center = sphere.center.at(0.0)  # Get center at t=0
         center_np = np.array([center.x, center.y, center.z], dtype=np.float32)
         builder.add_sphere(i, center_np, sphere.radius)
+
+    # Build BVH
+    builder.build()
+
+    # Flatten to arrays
+    return builder.flatten()
+
+
+def build_sah_bvh_from_primitives(spheres: List, quads: List) -> Dict[str, np.ndarray]:
+    """
+    Build SAH BVH from mixed primitive types (spheres and quads).
+
+    Args:
+        spheres: List of Sphere objects from scene
+        quads: List of quad objects from scene
+
+    Returns: Flattened BVH arrays ready for GPU upload
+    """
+    builder = SAHBVHBuilder()
+
+    # Add all spheres to builder
+    for i, sphere in enumerate(spheres):
+        center = sphere.center.at(0.0)  # Get center at t=0
+        center_np = np.array([center.x, center.y, center.z], dtype=np.float32)
+        builder.add_sphere(i, center_np, sphere.radius)
+
+    # Add all quads to builder
+    for i, q in enumerate(quads):
+        Q_np = np.array([q.Q.x, q.Q.y, q.Q.z], dtype=np.float32)
+        u_np = np.array([q.u.x, q.u.y, q.u.z], dtype=np.float32)
+        v_np = np.array([q.v.x, q.v.y, q.v.z], dtype=np.float32)
+        builder.add_quad(i, Q_np, u_np, v_np)
 
     # Build BVH
     builder.build()

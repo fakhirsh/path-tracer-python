@@ -73,45 +73,70 @@ class TaichiRenderer:
 
         # Compile scene
         t0 = time.time()
-        geometry_data, material_data, spheres = compile_scene(world)
+        geometry_data, material_data, spheres, quad_geometry_data, quad_material_data, quads = compile_scene(world)
         self.timing['scene_compile'] = time.time() - t0
 
         # Compile BVH
         t0 = time.time()
-        bvh_data = compile_bvh(world, spheres)
+        bvh_data = compile_bvh(world, spheres, quads)
         self.timing['bvh_compile'] = time.time() - t0
         self.timing['bvh_flatten'] = self.timing['bvh_compile']  # Alias for compatibility
 
         # Upload to GPU
         t0 = time.time()
-        self._upload_to_gpu(geometry_data, material_data, bvh_data)
+        self._upload_to_gpu(geometry_data, material_data, quad_geometry_data, quad_material_data, bvh_data)
         self._upload_camera()
         self.timing['gpu_upload'] = time.time() - t0
         self.timing['camera_upload'] = self.timing['gpu_upload']  # Alias for compatibility
 
         self.timing['total_setup'] = time.time() - setup_start
 
-    def _upload_to_gpu(self, geometry: dict, materials: dict, bvh: dict):
+    def _upload_to_gpu(self, geometry: dict, materials: dict, quad_geometry: dict, quad_materials: dict, bvh: dict):
         """Upload compiled numpy arrays to Taichi fields"""
-        # Geometry
+        # Sphere Geometry
         n = geometry['num_spheres']
         for i in range(n):
             fields.sphere_data[i] = geometry['sphere_data'][i]
         fields.num_spheres[None] = n
 
-        # Materials
+        # Sphere Materials
         for i in range(n):
             fields.material_type[i] = materials['material_type'][i]
             fields.material_albedo[i] = materials['material_albedo'][i]
             fields.material_fuzz[i] = materials['material_fuzz'][i]
             fields.material_ir[i] = materials['material_ir'][i]
 
-        # Textures
+        # Sphere Textures
         for i in range(n):
             fields.texture_type[i] = materials['texture_type'][i]
             fields.texture_scale[i] = materials['texture_scale'][i]
             fields.texture_color1[i] = materials['texture_color1'][i]
             fields.texture_color2[i] = materials['texture_color2'][i]
+
+        # Quad Geometry
+        nq = quad_geometry['num_quads']
+        for i in range(nq):
+            fields.quad_Q[i] = quad_geometry['quad_Q'][i]
+            fields.quad_u[i] = quad_geometry['quad_u'][i]
+            fields.quad_v[i] = quad_geometry['quad_v'][i]
+            fields.quad_normal[i] = quad_geometry['quad_normal'][i]
+            fields.quad_D[i] = quad_geometry['quad_D'][i]
+            fields.quad_w[i] = quad_geometry['quad_w'][i]
+        fields.num_quads[None] = nq
+
+        # Quad Materials (separate arrays from spheres)
+        for i in range(nq):
+            fields.quad_material_type[i] = quad_materials['material_type'][i]
+            fields.quad_material_albedo[i] = quad_materials['material_albedo'][i]
+            fields.quad_material_fuzz[i] = quad_materials['material_fuzz'][i]
+            fields.quad_material_ir[i] = quad_materials['material_ir'][i]
+
+        # Quad Textures
+        for i in range(nq):
+            fields.quad_texture_type[i] = quad_materials['texture_type'][i]
+            fields.quad_texture_scale[i] = quad_materials['texture_scale'][i]
+            fields.quad_texture_color1[i] = quad_materials['texture_color1'][i]
+            fields.quad_texture_color2[i] = quad_materials['texture_color2'][i]
 
         # BVH - Upload to PACKED structure (new optimized format)
         bvh_n = bvh['num_bvh_nodes']

@@ -31,11 +31,13 @@ triangle_v1 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
 triangle_v2 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
 num_triangles = ti.field(ti.i32, shape=())
 
-# Quads (for future use - define fields but leave unpopulated)
-quad_v0 = ti.Vector.field(3, ti.f32, MAX_QUADS)
-quad_v1 = ti.Vector.field(3, ti.f32, MAX_QUADS)
-quad_v2 = ti.Vector.field(3, ti.f32, MAX_QUADS)
-quad_v3 = ti.Vector.field(3, ti.f32, MAX_QUADS)
+# Quads: Q (corner), u (first edge), v (second edge), normal, D, w
+quad_Q = ti.Vector.field(3, ti.f32, MAX_QUADS)      # Corner point
+quad_u = ti.Vector.field(3, ti.f32, MAX_QUADS)      # First edge vector
+quad_v = ti.Vector.field(3, ti.f32, MAX_QUADS)      # Second edge vector
+quad_normal = ti.Vector.field(3, ti.f32, MAX_QUADS) # Normal vector
+quad_D = ti.field(ti.f32, MAX_QUADS)                # Plane constant
+quad_w = ti.Vector.field(3, ti.f32, MAX_QUADS)      # Planar coordinate helper
 num_quads = ti.field(ti.i32, shape=())
 
 # =============================================================================
@@ -70,21 +72,33 @@ bvh_prim_idx = ti.field(ti.i32, MAX_BVH_NODES)
 # COLD DATA: Materials (accessed once per ray on closest hit)
 # =============================================================================
 
-# Material type: 0=lambertian, 1=metal, 2=dielectric
-material_type = ti.field(ti.i32, MAX_SPHERES)  # Indexed by primitive
+# Sphere Materials
+material_type = ti.field(ti.i32, MAX_SPHERES)  # Indexed by sphere primitive
 material_albedo = ti.Vector.field(3, ti.f32, MAX_SPHERES)
 material_fuzz = ti.field(ti.f32, MAX_SPHERES)      # Metal only
 material_ir = ti.field(ti.f32, MAX_SPHERES)        # Dielectric only (index of refraction)
+
+# Quad Materials
+quad_material_type = ti.field(ti.i32, MAX_QUADS)
+quad_material_albedo = ti.Vector.field(3, ti.f32, MAX_QUADS)
+quad_material_fuzz = ti.field(ti.f32, MAX_QUADS)
+quad_material_ir = ti.field(ti.f32, MAX_QUADS)
 
 # =============================================================================
 # COLD DATA: Textures
 # =============================================================================
 
-# Texture type: 0=solid, 1=checker
+# Sphere Textures
 texture_type = ti.field(ti.i32, MAX_SPHERES)
 texture_scale = ti.field(ti.f32, MAX_SPHERES)      # Checker scale
 texture_color1 = ti.Vector.field(3, ti.f32, MAX_SPHERES)  # Primary/even color
 texture_color2 = ti.Vector.field(3, ti.f32, MAX_SPHERES)  # Secondary/odd color
+
+# Quad Textures
+quad_texture_type = ti.field(ti.i32, MAX_QUADS)
+quad_texture_scale = ti.field(ti.f32, MAX_QUADS)
+quad_texture_color1 = ti.Vector.field(3, ti.f32, MAX_QUADS)
+quad_texture_color2 = ti.Vector.field(3, ti.f32, MAX_QUADS)
 
 # =============================================================================
 # CAMERA

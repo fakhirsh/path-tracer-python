@@ -50,6 +50,35 @@ def extract_spheres(world) -> List:
     return spheres
 
 
+def extract_quads(world) -> List:
+    """
+    Recursively extract all quad objects from world hierarchy.
+    Handles: quad, hittable_list, bvh_node
+    Returns: List of quad objects
+    """
+    from core.quad import quad
+    from core.hittable_list import hittable_list
+    from core.bvh_node import bvh_node
+
+    quads = []
+
+    # Check if this is a quad
+    if isinstance(world, quad):
+        quads.append(world)
+    # Check if this is a hittable_list
+    elif isinstance(world, hittable_list):
+        for item in world.objects:
+            quads.extend(extract_quads(item))
+    # Check if this is a bvh_node
+    elif isinstance(world, bvh_node):
+        if world.left is not None:
+            quads.extend(extract_quads(world.left))
+        if world.right is not None:
+            quads.extend(extract_quads(world.right))
+
+    return quads
+
+
 def compile_geometry(spheres: List) -> Dict[str, np.ndarray]:
     """
     Pack sphere geometry into numpy arrays for GPU upload.
@@ -72,6 +101,46 @@ def compile_geometry(spheres: List) -> Dict[str, np.ndarray]:
     return {
         'sphere_data': sphere_data,
         'num_spheres': n
+    }
+
+
+def compile_quad_geometry(quads: List) -> Dict[str, np.ndarray]:
+    """
+    Pack quad geometry into numpy arrays for GPU upload.
+
+    Returns dict with:
+        'quad_Q': np.ndarray of shape (N, 3) dtype=float32  # Corner point
+        'quad_u': np.ndarray of shape (N, 3) dtype=float32  # First edge vector
+        'quad_v': np.ndarray of shape (N, 3) dtype=float32  # Second edge vector
+        'quad_normal': np.ndarray of shape (N, 3) dtype=float32
+        'quad_D': np.ndarray of shape (N,) dtype=float32
+        'quad_w': np.ndarray of shape (N, 3) dtype=float32
+        'num_quads': int
+    """
+    n = len(quads)
+    quad_Q = np.zeros((n, 3), dtype=np.float32)
+    quad_u = np.zeros((n, 3), dtype=np.float32)
+    quad_v = np.zeros((n, 3), dtype=np.float32)
+    quad_normal = np.zeros((n, 3), dtype=np.float32)
+    quad_D = np.zeros(n, dtype=np.float32)
+    quad_w = np.zeros((n, 3), dtype=np.float32)
+
+    for i, q in enumerate(quads):
+        quad_Q[i] = [q.Q.x, q.Q.y, q.Q.z]
+        quad_u[i] = [q.u.x, q.u.y, q.u.z]
+        quad_v[i] = [q.v.x, q.v.y, q.v.z]
+        quad_normal[i] = [q.normal.x, q.normal.y, q.normal.z]
+        quad_D[i] = q.D
+        quad_w[i] = [q.w.x, q.w.y, q.w.z]
+
+    return {
+        'quad_Q': quad_Q,
+        'quad_u': quad_u,
+        'quad_v': quad_v,
+        'quad_normal': quad_normal,
+        'quad_D': quad_D,
+        'quad_w': quad_w,
+        'num_quads': n
     }
 
 
@@ -190,16 +259,141 @@ def compile_materials(spheres: List) -> Dict[str, np.ndarray]:
     }
 
 
-def compile_scene(world) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List]:
+def compile_quad_materials(quads: List) -> Dict[str, np.ndarray]:
+    """
+    Extract material properties from quads.
+    Similar to compile_materials but for quads.
+
+    Returns dict with:
+        'material_type': np.ndarray of shape (N,) dtype=int32
+        'material_albedo': np.ndarray of shape (N, 3) dtype=float32
+        'material_fuzz': np.ndarray of shape (N,) dtype=float32
+        'material_ir': np.ndarray of shape (N,) dtype=float32
+        'texture_type': np.ndarray of shape (N,) dtype=int32
+        'texture_scale': np.ndarray of shape (N,) dtype=float32
+        'texture_color1': np.ndarray of shape (N, 3) dtype=float32
+        'texture_color2': np.ndarray of shape (N, 3) dtype=float32
+    """
+    n = len(quads)
+
+    material_type = np.zeros(n, dtype=np.int32)
+    material_albedo = np.zeros((n, 3), dtype=np.float32)
+    material_fuzz = np.zeros(n, dtype=np.float32)
+    material_ir = np.zeros(n, dtype=np.float32)
+
+    texture_type = np.zeros(n, dtype=np.int32)
+    texture_scale = np.ones(n, dtype=np.float32)
+    texture_color1 = np.zeros((n, 3), dtype=np.float32)
+    texture_color2 = np.zeros((n, 3), dtype=np.float32)
+
+    for i, q in enumerate(quads):
+        mat = q.mat
+        mat_type_name = type(mat).__name__
+        # Use quad corner as reference point for texture sampling
+        ref_point = q.Q
+
+        if mat_type_name == 'lambertian':
+            material_type[i] = MAT_LAMBERTIAN
+
+            # Extract texture information
+            tex_type_name = type(mat.tex).__name__
+
+            if tex_type_name == 'checker_texture':
+                # Checker texture - store scale and two colors
+                texture_type[i] = TEX_CHECKER
+                texture_scale[i] = 1.0 / mat.tex.inv_scale  # Convert back to scale
+
+                # Get the two colors from even and odd textures
+                color1 = mat.tex.even.value(0, 0, ref_point)
+                color2 = mat.tex.odd.value(0, 0, ref_point)
+                texture_color1[i] = [color1.x, color1.y, color1.z]
+                texture_color2[i] = [color2.x, color2.y, color2.z]
+
+                # Set albedo to white (will be overridden by texture evaluation)
+                material_albedo[i] = [1.0, 1.0, 1.0]
+            else:
+                # Solid color or other texture - sample once
+                texture_type[i] = TEX_SOLID
+                try:
+                    mat_color = mat.tex.value(0, 0, ref_point)
+                    material_albedo[i] = [mat_color.x, mat_color.y, mat_color.z]
+                    texture_color1[i] = [mat_color.x, mat_color.y, mat_color.z]
+                    texture_color2[i] = [mat_color.x, mat_color.y, mat_color.z]
+                except:
+                    material_albedo[i] = [0.8, 0.8, 0.8]
+                    texture_color1[i] = [0.8, 0.8, 0.8]
+                    texture_color2[i] = [0.8, 0.8, 0.8]
+
+            material_fuzz[i] = 0.0
+            material_ir[i] = 1.0
+
+        elif mat_type_name == 'metal':
+            material_type[i] = MAT_METAL
+            material_albedo[i] = [mat.albedo.x, mat.albedo.y, mat.albedo.z]
+            material_fuzz[i] = mat.fuzz
+            material_ir[i] = 1.0
+
+            # Initialize texture fields (not used for metal)
+            texture_type[i] = TEX_SOLID
+            texture_scale[i] = 1.0
+            texture_color1[i] = [mat.albedo.x, mat.albedo.y, mat.albedo.z]
+            texture_color2[i] = [mat.albedo.x, mat.albedo.y, mat.albedo.z]
+
+        elif mat_type_name == 'dielectric':
+            material_type[i] = MAT_DIELECTRIC
+            material_albedo[i] = [1.0, 1.0, 1.0]  # Dielectric is always white
+            material_fuzz[i] = 0.0
+            material_ir[i] = mat.ir
+
+            # Initialize texture fields (not used for dielectric)
+            texture_type[i] = TEX_SOLID
+            texture_scale[i] = 1.0
+            texture_color1[i] = [1.0, 1.0, 1.0]
+            texture_color2[i] = [1.0, 1.0, 1.0]
+
+        else:
+            # Unsupported material - default to lambertian
+            material_type[i] = MAT_LAMBERTIAN
+            material_albedo[i] = [0.8, 0.8, 0.8]
+            material_fuzz[i] = 0.0
+            material_ir[i] = 1.0
+
+            # Initialize texture fields
+            texture_type[i] = TEX_SOLID
+            texture_scale[i] = 1.0
+            texture_color1[i] = [0.8, 0.8, 0.8]
+            texture_color2[i] = [0.8, 0.8, 0.8]
+
+    return {
+        'material_type': material_type,
+        'material_albedo': material_albedo,
+        'material_fuzz': material_fuzz,
+        'material_ir': material_ir,
+        'texture_type': texture_type,
+        'texture_scale': texture_scale,
+        'texture_color1': texture_color1,
+        'texture_color2': texture_color2
+    }
+
+
+def compile_scene(world) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List, Dict[str, np.ndarray], List]:
     """
     Main entry point: compile entire scene.
 
     Returns:
-        geometry_data: dict of numpy arrays
-        material_data: dict of numpy arrays
+        geometry_data: dict of numpy arrays (spheres)
+        material_data: dict of numpy arrays (sphere materials)
         spheres: list of sphere objects (needed for BVH compiler)
+        quad_geometry_data: dict of numpy arrays (quads)
+        quads: list of quad objects (needed for BVH compiler)
     """
     spheres = extract_spheres(world)
+    quads = extract_quads(world)
+
     geometry = compile_geometry(spheres)
     materials = compile_materials(spheres)
-    return geometry, materials, spheres
+
+    quad_geometry = compile_quad_geometry(quads)
+    quad_materials = compile_quad_materials(quads)
+
+    return geometry, materials, spheres, quad_geometry, quad_materials, quads
