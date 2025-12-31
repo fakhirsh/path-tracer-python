@@ -184,7 +184,7 @@ class InteractiveViewer(TaichiRenderer):
         print(f"Resolution:       {self.cam.img_width} x {self.cam.img_height} ({total_pixels:,} pixels)")
         print(f"Samples:          {self.current_sample} / {self.cam.samples_per_pixel}")
         print(f"Max Ray Depth:    {self.max_depth}")
-        print(f"Scene Complexity: {self.num_spheres[None]} spheres, {self.num_bvh_nodes[None]} BVH nodes")
+        print(f"Scene Complexity: {self.num_spheres} spheres, {self.num_bvh_nodes} BVH nodes")
 
         print(f"\n{'─'*60}")
         print(f"TIMING STATISTICS")
@@ -327,7 +327,7 @@ class InteractiveViewer(TaichiRenderer):
         # Print compact setup summary
         print(f"\nInteractiveViewer")
         print(f"Resolution: {self.cam.img_width}x{self.cam.img_height} | Max Samples: {self.cam.samples_per_pixel} | Depth: {self.max_depth}")
-        print(f"Spheres: {self.num_spheres[None]} | BVH Nodes: {self.num_bvh_nodes[None]}")
+        print(f"Spheres: {self.num_spheres} | BVH Nodes: {self.num_bvh_nodes}")
 
         # Show profiler status if enabled
         from render_server.taichi_renderer import ENABLE_PROFILER

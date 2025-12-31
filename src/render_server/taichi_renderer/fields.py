@@ -1,0 +1,113 @@
+"""
+Taichi GPU Field Definitions
+
+All Taichi fields (GPU memory allocations) are defined here.
+Fields are organized by access pattern (HOT vs COLD data).
+"""
+
+import taichi as ti
+
+# =============================================================================
+# CONFIGURATION CONSTANTS
+# =============================================================================
+
+MAX_SPHERES = 2048
+MAX_TRIANGLES = 4096    # For future use
+MAX_QUADS = 2048        # For future use
+MAX_BVH_NODES = 8192
+MAX_DEPTH = 50
+
+# =============================================================================
+# HOT DATA: Geometry (accessed during intersection tests)
+# =============================================================================
+
+# Spheres: pack center (xyz) + radius (w) into vec4 for aligned access
+sphere_data = ti.Vector.field(4, ti.f32, MAX_SPHERES)  # [cx, cy, cz, radius]
+num_spheres = ti.field(ti.i32, shape=())
+
+# Triangles (for future use - define fields but leave unpopulated)
+triangle_v0 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
+triangle_v1 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
+triangle_v2 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
+num_triangles = ti.field(ti.i32, shape=())
+
+# Quads (for future use - define fields but leave unpopulated)
+quad_v0 = ti.Vector.field(3, ti.f32, MAX_QUADS)
+quad_v1 = ti.Vector.field(3, ti.f32, MAX_QUADS)
+quad_v2 = ti.Vector.field(3, ti.f32, MAX_QUADS)
+quad_v3 = ti.Vector.field(3, ti.f32, MAX_QUADS)
+num_quads = ti.field(ti.i32, shape=())
+
+# =============================================================================
+# HOT DATA: BVH (accessed during traversal)
+# =============================================================================
+
+bvh_bbox_min = ti.Vector.field(3, ti.f32, MAX_BVH_NODES)
+bvh_bbox_max = ti.Vector.field(3, ti.f32, MAX_BVH_NODES)
+bvh_left_child = ti.field(ti.i32, MAX_BVH_NODES)   # -1 if leaf
+bvh_right_child = ti.field(ti.i32, MAX_BVH_NODES)  # -1 if leaf
+bvh_prim_type = ti.field(ti.i32, MAX_BVH_NODES)    # 0=sphere, 1=triangle, 2=quad
+bvh_prim_idx = ti.field(ti.i32, MAX_BVH_NODES)     # Index into geometry array, -1 if internal
+num_bvh_nodes = ti.field(ti.i32, shape=())
+
+# =============================================================================
+# COLD DATA: Materials (accessed once per ray on closest hit)
+# =============================================================================
+
+# Material type: 0=lambertian, 1=metal, 2=dielectric
+material_type = ti.field(ti.i32, MAX_SPHERES)  # Indexed by primitive
+material_albedo = ti.Vector.field(3, ti.f32, MAX_SPHERES)
+material_fuzz = ti.field(ti.f32, MAX_SPHERES)      # Metal only
+material_ir = ti.field(ti.f32, MAX_SPHERES)        # Dielectric only (index of refraction)
+
+# =============================================================================
+# COLD DATA: Textures
+# =============================================================================
+
+# Texture type: 0=solid, 1=checker
+texture_type = ti.field(ti.i32, MAX_SPHERES)
+texture_scale = ti.field(ti.f32, MAX_SPHERES)      # Checker scale
+texture_color1 = ti.Vector.field(3, ti.f32, MAX_SPHERES)  # Primary/even color
+texture_color2 = ti.Vector.field(3, ti.f32, MAX_SPHERES)  # Secondary/odd color
+
+# =============================================================================
+# CAMERA
+# =============================================================================
+
+cam_center = ti.Vector.field(3, ti.f32, shape=())
+cam_pixel00 = ti.Vector.field(3, ti.f32, shape=())
+cam_delta_u = ti.Vector.field(3, ti.f32, shape=())
+cam_delta_v = ti.Vector.field(3, ti.f32, shape=())
+cam_defocus_disk_u = ti.Vector.field(3, ti.f32, shape=())
+cam_defocus_disk_v = ti.Vector.field(3, ti.f32, shape=())
+cam_defocus_angle = ti.field(ti.f32, shape=())
+
+# =============================================================================
+# RENDER STATE
+# =============================================================================
+
+bg_color = ti.Vector.field(3, ti.f32, shape=())
+max_depth = ti.field(ti.i32, shape=())
+
+# Accumulation buffer - allocated dynamically after camera initialization
+accum_buffer = None
+
+
+# =============================================================================
+# DYNAMIC FIELD ALLOCATION
+# =============================================================================
+
+def allocate_dynamic_fields(width: int, height: int):
+    """
+    Allocate fields that depend on image dimensions.
+    Must be called after camera initialization.
+    """
+    global accum_buffer
+    accum_buffer = ti.Vector.field(3, ti.f32, shape=(height, width))
+
+
+@ti.kernel
+def clear_accumulation_buffer():
+    """Clear accumulation buffer to zero"""
+    for py, px in accum_buffer:
+        accum_buffer[py, px] = ti.math.vec3(0.0)
