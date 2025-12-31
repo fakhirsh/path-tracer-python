@@ -1,6 +1,7 @@
 import taichi as ti
 import numpy as np
 import time
+import os
 from core.hittable import hittable
 from core.camera import camera
 from core.sphere import Sphere
@@ -10,8 +11,14 @@ from render_server.base_renderer import BaseRenderer
 from util.color import color
 import math
 
-# Initialize Taichi for GPU
-ti.init(arch=ti.metal)  # Metal backend for Apple Silicon (M1/M2/M3)
+# Initialize Taichi for GPU with optional profiling
+# Set TAICHI_KERNEL_PROFILER=1 to enable kernel profiling
+ENABLE_PROFILER = os.environ.get('TAICHI_KERNEL_PROFILER', '0') == '1'
+
+ti.init(
+    arch=ti.metal,  # Metal backend for Apple Silicon (M1/M2/M3)
+    kernel_profiler=ENABLE_PROFILER
+)
 
 
 @ti.data_oriented
@@ -25,6 +32,10 @@ class TaichiRenderer(BaseRenderer):
     MAT_LAMBERTIAN = 0
     MAT_METAL = 1
     MAT_DIELECTRIC = 2
+
+    # Texture type constants
+    TEX_SOLID = 0
+    TEX_CHECKER = 1
 
     def __init__(self, world: hittable, cam: camera, img_path: str):
         # Configuration
@@ -76,6 +87,12 @@ class TaichiRenderer(BaseRenderer):
         self.sphere_mat_albedo = ti.Vector.field(3, ti.f32, self.MAX_SPHERES)  # color for lambertian/metal
         self.sphere_mat_fuzz = ti.field(ti.f32, self.MAX_SPHERES)  # fuzz for metal
         self.sphere_mat_ir = ti.field(ti.f32, self.MAX_SPHERES)  # index of refraction for dielectric
+
+        # Texture data (for lambertian materials)
+        self.sphere_tex_type = ti.field(ti.i32, self.MAX_SPHERES)  # 0=solid, 1=checker
+        self.sphere_tex_scale = ti.field(ti.f32, self.MAX_SPHERES)  # scale for checker
+        self.sphere_tex_color1 = ti.Vector.field(3, ti.f32, self.MAX_SPHERES)  # first color (even)
+        self.sphere_tex_color2 = ti.Vector.field(3, ti.f32, self.MAX_SPHERES)  # second color (odd)
 
         # Camera data on GPU
         self.cam_center = ti.Vector.field(3, ti.f32, shape=())
@@ -138,11 +155,37 @@ class TaichiRenderer(BaseRenderer):
 
             if mat_type_name == 'lambertian':
                 self.sphere_mat_type[i] = self.MAT_LAMBERTIAN
-                try:
-                    mat_color = mat.tex.value(0, 0, center1)
-                    self.sphere_mat_albedo[i] = [mat_color.x, mat_color.y, mat_color.z]
-                except:
-                    self.sphere_mat_albedo[i] = [0.8, 0.8, 0.8]
+
+                # Extract texture information
+                tex_type_name = type(mat.tex).__name__
+
+                if tex_type_name == 'checker_texture':
+                    # Checker texture - store scale and two colors
+                    self.sphere_tex_type[i] = self.TEX_CHECKER
+                    self.sphere_tex_scale[i] = 1.0 / mat.tex.inv_scale  # Convert back to scale
+
+                    # Get the two colors from even and odd textures
+                    color1 = mat.tex.even.value(0, 0, center1)
+                    color2 = mat.tex.odd.value(0, 0, center1)
+                    self.sphere_tex_color1[i] = [color1.x, color1.y, color1.z]
+                    self.sphere_tex_color2[i] = [color2.x, color2.y, color2.z]
+
+                    # Set albedo to white (will be overridden by texture evaluation)
+                    self.sphere_mat_albedo[i] = [1.0, 1.0, 1.0]
+                else:
+                    # Solid color or other texture - sample once
+                    self.sphere_tex_type[i] = self.TEX_SOLID
+                    try:
+                        mat_color = mat.tex.value(0, 0, center1)
+                        self.sphere_mat_albedo[i] = [mat_color.x, mat_color.y, mat_color.z]
+                        self.sphere_tex_color1[i] = [mat_color.x, mat_color.y, mat_color.z]
+                        self.sphere_tex_color2[i] = [mat_color.x, mat_color.y, mat_color.z]
+                    except:
+                        self.sphere_mat_albedo[i] = [0.8, 0.8, 0.8]
+                        self.sphere_tex_color1[i] = [0.8, 0.8, 0.8]
+                        self.sphere_tex_color2[i] = [0.8, 0.8, 0.8]
+                    self.sphere_tex_scale[i] = 1.0
+
                 self.sphere_mat_fuzz[i] = 0.0
                 self.sphere_mat_ir[i] = 1.0
 
@@ -152,11 +195,23 @@ class TaichiRenderer(BaseRenderer):
                 self.sphere_mat_fuzz[i] = mat.fuzz
                 self.sphere_mat_ir[i] = 1.0
 
+                # Initialize texture fields (not used for metal)
+                self.sphere_tex_type[i] = self.TEX_SOLID
+                self.sphere_tex_scale[i] = 1.0
+                self.sphere_tex_color1[i] = [mat.albedo.x, mat.albedo.y, mat.albedo.z]
+                self.sphere_tex_color2[i] = [mat.albedo.x, mat.albedo.y, mat.albedo.z]
+
             elif mat_type_name == 'dielectric':
                 self.sphere_mat_type[i] = self.MAT_DIELECTRIC
                 self.sphere_mat_albedo[i] = [1.0, 1.0, 1.0]  # Dielectric is always white
                 self.sphere_mat_fuzz[i] = 0.0
                 self.sphere_mat_ir[i] = mat.ir
+
+                # Initialize texture fields (not used for dielectric)
+                self.sphere_tex_type[i] = self.TEX_SOLID
+                self.sphere_tex_scale[i] = 1.0
+                self.sphere_tex_color1[i] = [1.0, 1.0, 1.0]
+                self.sphere_tex_color2[i] = [1.0, 1.0, 1.0]
 
             else:
                 # Unsupported material - default to lambertian
@@ -164,6 +219,12 @@ class TaichiRenderer(BaseRenderer):
                 self.sphere_mat_albedo[i] = [0.8, 0.8, 0.8]
                 self.sphere_mat_fuzz[i] = 0.0
                 self.sphere_mat_ir[i] = 1.0
+
+                # Initialize texture fields
+                self.sphere_tex_type[i] = self.TEX_SOLID
+                self.sphere_tex_scale[i] = 1.0
+                self.sphere_tex_color1[i] = [0.8, 0.8, 0.8]
+                self.sphere_tex_color2[i] = [0.8, 0.8, 0.8]
 
         self.timing['scene_compile'] = time.time() - compile_start
 
@@ -458,6 +519,33 @@ class TaichiRenderer(BaseRenderer):
         return hit, t, hit_point, normal
 
     @ti.func
+    def eval_texture(self, mat_idx: ti.i32, hit_point: ti.math.vec3) -> ti.math.vec3:
+        """
+        Evaluate texture at hit point to get surface color.
+        Returns: RGB color as vec3
+        """
+        tex_type = self.sphere_tex_type[mat_idx]
+        result = ti.math.vec3(1.0, 1.0, 1.0)
+
+        if tex_type == 0:  # TEX_SOLID
+            result = self.sphere_tex_color1[mat_idx]
+        elif tex_type == 1:  # TEX_CHECKER
+            # Checker pattern based on 3D position
+            inv_scale = 1.0 / self.sphere_tex_scale[mat_idx]
+            x_int = ti.floor(inv_scale * hit_point.x)
+            y_int = ti.floor(inv_scale * hit_point.y)
+            z_int = ti.floor(inv_scale * hit_point.z)
+
+            is_even = (ti.cast(x_int, ti.i32) + ti.cast(y_int, ti.i32) + ti.cast(z_int, ti.i32)) % 2 == 0
+
+            if is_even:
+                result = self.sphere_tex_color1[mat_idx]
+            else:
+                result = self.sphere_tex_color2[mat_idx]
+
+        return result
+
+    @ti.func
     def hit_world(self, ray_origin: ti.math.vec3, ray_dir: ti.math.vec3, ray_time: ti.f32,
                   t_min: ti.f32, t_max: ti.f32) -> tuple:
         """
@@ -542,18 +630,20 @@ class TaichiRenderer(BaseRenderer):
             if hit:
                 # Material scattering based on type
                 mat_type = self.sphere_mat_type[mat_idx]
-                albedo = self.sphere_mat_albedo[mat_idx]
                 scatter_dir = ti.math.vec3(0.0)
                 scattered = False
 
                 # LAMBERTIAN material
                 if mat_type == 0:
+                    # Evaluate texture at hit point to get albedo
+                    albedo = self.eval_texture(mat_idx, hit_point)
                     scatter_dir = self.random_cosine_direction(normal)
                     throughput = throughput * albedo
                     scattered = True
 
                 # METAL material
                 elif mat_type == 1:
+                    albedo = self.sphere_mat_albedo[mat_idx]
                     reflected = self.reflect(current_dir.normalized(), normal)
                     fuzz = self.sphere_mat_fuzz[mat_idx]
                     scatter_dir = reflected + fuzz * self.random_unit_vector()

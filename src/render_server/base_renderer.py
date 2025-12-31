@@ -195,7 +195,8 @@ class BaseRenderer(ABC):
 
             # Update title with current sample count
             samples_completed = self.current_sample
-            total_samples = self.cam.samples_per_pixel
+            # Use max_samples if available (InteractiveViewer), otherwise use cam.samples_per_pixel
+            total_samples = getattr(self, 'max_samples', self.cam.samples_per_pixel)
             progress = (samples_completed / total_samples * 100) if total_samples > 0 else 0
             self.preview_title.config(
                 text=f"Sample {samples_completed}/{total_samples} ({progress:.1f}%)"

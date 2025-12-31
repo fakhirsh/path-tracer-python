@@ -189,7 +189,9 @@ def vol2_sec2_6_interactive():
     """Interactive version of vol2_sec2_6 with mouse-controlled camera rotation"""
     world = hittable_list()
 
-    ground_material = lambertian.from_color(color(0.5, 0.5, 0.5))
+    checker = checker_texture.from_colors(0.32, color(0.2, 0.3, 0.1), color(0.9, 0.9, 0.9))
+    ground_material = lambertian.from_texture(checker)
+    # ground_material = lambertian.from_color(color(0.5, 0.5, 0.5))
     world.add(Sphere.stationary(point3(0, -1000, 0), 1000, ground_material))
 
     for a in range(-11, 11):
@@ -235,7 +237,7 @@ def vol2_sec2_6_interactive():
 
     cam.aspect_ratio = 16.0 / 9.0
     cam.img_width = 1280
-    cam.samples_per_pixel = 1000  # Not used in interactive mode, but set for final save
+    cam.samples_per_pixel = 1000
 
     cam.vfov = 20
     cam.lookfrom = point3(13, 2, 3)
@@ -254,7 +256,6 @@ def vol2_sec2_6_interactive():
     )
     viewer.background_color = color(0.70, 0.80, 1.00)
     viewer.max_depth = 50
-    viewer.max_samples = 500  # Stop rendering after this many samples (window stays open)
 
     print("\nInteractive Controls:")
     print("  - Left-click and drag to rotate camera")

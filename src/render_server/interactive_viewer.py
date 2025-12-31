@@ -47,7 +47,6 @@ class InteractiveViewer(TaichiRenderer):
         self._initialize_spherical_coords()
 
         # Rendering state
-        self.max_samples = 1000  # Stop rendering after this many samples (but keep window open)
         self.is_rendering_active = True  # Flag to pause/resume rendering
 
     def _initialize_spherical_coords(self):
@@ -147,6 +146,112 @@ class InteractiveViewer(TaichiRenderer):
         print("Camera rotated - restarting render from sample 0")
         print(f"{'─'*60}")
 
+    def _print_render_summary(self):
+        """Print comprehensive rendering statistics with GPU performance indicators"""
+        if not self.sample_times:
+            return
+
+        import time
+        import statistics
+
+        # Calculate timing statistics
+        total_render_time = time.time() - self.render_start_time
+        avg_sample_time = statistics.mean(self.sample_times)
+        min_sample_time = min(self.sample_times)
+        max_sample_time = max(self.sample_times)
+
+        # NEW: Statistical analysis
+        median_sample_time = statistics.median(self.sample_times)
+        std_dev_sample_time = statistics.stdev(self.sample_times) if len(self.sample_times) > 1 else 0.0
+        cv_sample_time = (std_dev_sample_time / avg_sample_time * 100) if avg_sample_time > 0 else 0.0
+
+        # Calculate percentiles for outlier detection
+        if len(self.sample_times) >= 20:
+            p95_sample_time = statistics.quantiles(self.sample_times, n=20)[18]  # 95th percentile
+        else:
+            p95_sample_time = max_sample_time
+
+        # Throughput metrics
+        total_pixels = self.cam.img_width * self.cam.img_height
+        pixels_per_sec = total_pixels / avg_sample_time if avg_sample_time > 0 else 0
+        rays_per_sec = pixels_per_sec * self.max_depth
+        samples_per_sec = 1.0 / avg_sample_time if avg_sample_time > 0 else 0
+
+        # Print summary
+        print(f"\n{'═'*60}")
+        print(f"RENDER SUMMARY")
+        print(f"{'═'*60}")
+        print(f"Resolution:       {self.cam.img_width} x {self.cam.img_height} ({total_pixels:,} pixels)")
+        print(f"Samples:          {self.current_sample} / {self.cam.samples_per_pixel}")
+        print(f"Max Ray Depth:    {self.max_depth}")
+        print(f"Scene Complexity: {self.num_spheres[None]} spheres, {self.num_bvh_nodes[None]} BVH nodes")
+
+        print(f"\n{'─'*60}")
+        print(f"TIMING STATISTICS")
+        print(f"{'─'*60}")
+        print(f"Total Render Time:  {total_render_time:6.2f}s")
+        print(f"Sample Time:")
+        print(f"  Mean:             {avg_sample_time*1000:6.2f}ms")
+        print(f"  Median:           {median_sample_time*1000:6.2f}ms")
+        print(f"  Std Dev:          {std_dev_sample_time*1000:6.2f}ms")
+        print(f"  Min:              {min_sample_time*1000:6.2f}ms")
+        print(f"  Max:              {max_sample_time*1000:6.2f}ms")
+        if len(self.sample_times) >= 20:
+            print(f"  95th percentile:  {p95_sample_time*1000:6.2f}ms")
+
+        print(f"\n{'─'*60}")
+        print(f"THROUGHPUT")
+        print(f"{'─'*60}")
+        print(f"Samples/sec:      {samples_per_sec:6.2f} samp/s")
+        print(f"Pixels/sec:       {pixels_per_sec/1e6:6.2f} Mpix/s")
+        print(f"Rays/sec:         {rays_per_sec/1e6:6.2f} Mrays/s")
+
+        # NEW: GPU Performance Indicators
+        print(f"\n{'─'*60}")
+        print(f"GPU PERFORMANCE INDICATORS")
+        print(f"{'─'*60}")
+        print(f"Timing Variability:")
+        print(f"  Coefficient of Variation: {cv_sample_time:5.2f}%")
+
+        # Interpret CV (variance measure)
+        if cv_sample_time < 5:
+            variance_status = "Low (consistent performance)"
+        elif cv_sample_time < 15:
+            variance_status = "Moderate (some variation)"
+        else:
+            variance_status = "High (possible divergence/throttling)"
+
+        print(f"  Status: {variance_status}")
+
+        # Detect potential issues
+        if max_sample_time > avg_sample_time * 1.5:
+            ratio = max_sample_time / avg_sample_time
+            print(f"\n⚠️  WARNING: Detected outlier samples (max is {ratio:.1f}x mean)")
+            print(f"  This may indicate:")
+            print(f"    • Thermal throttling")
+            print(f"    • Thread divergence in complex rays")
+            print(f"    • System background tasks")
+
+        # Print Taichi profiler info if enabled
+        from render_server.taichi_renderer import ENABLE_PROFILER
+        if ENABLE_PROFILER:
+            print(f"\n{'─'*60}")
+            print(f"TAICHI KERNEL PROFILER")
+            print(f"{'─'*60}")
+            ti.profiler.print_kernel_profiler_info('count')
+
+        print(f"\n{'─'*60}")
+        print(f"GPU PROFILING TOOLS")
+        print(f"{'─'*60}")
+        print(f"For detailed GPU metrics, use:")
+        print(f"  1. Metal Performance HUD (live GPU utilization %):")
+        print(f"     MTL_HUD_ENABLED=1 python3 main.py")
+        print(f"  2. Instruments (detailed GPU profiling):")
+        print(f"     instruments -t 'Metal System Trace' python3 main.py")
+        print(f"  3. Taichi Profiler (kernel timing breakdown, ~5-10% overhead):")
+        print(f"     TAICHI_KERNEL_PROFILER=1 python3 main.py")
+        print(f"{'═'*60}")
+
     def on_mouse_down(self, event):
         """Handle mouse button press - start tracking drag"""
         self.mouse_down = True
@@ -216,13 +321,18 @@ class InteractiveViewer(TaichiRenderer):
     def render_interactive(self):
         """
         Main interactive rendering loop.
-        Renders up to max_samples, then pauses but keeps window open.
+        Renders up to cam.samples_per_pixel, then pauses but keeps window open.
         Mouse interaction restarts rendering from scratch.
         """
         # Print compact setup summary
         print(f"\nInteractiveViewer")
-        print(f"Resolution: {self.cam.img_width}x{self.cam.img_height} | Max Samples: {self.max_samples} | Depth: {self.max_depth}")
+        print(f"Resolution: {self.cam.img_width}x{self.cam.img_height} | Max Samples: {self.cam.samples_per_pixel} | Depth: {self.max_depth}")
         print(f"Spheres: {self.num_spheres[None]} | BVH Nodes: {self.num_bvh_nodes[None]}")
+
+        # Show profiler status if enabled
+        from render_server.taichi_renderer import ENABLE_PROFILER
+        if ENABLE_PROFILER:
+            print(f"⚙️  Taichi Kernel Profiler: ENABLED (5-10% overhead)")
         print(f"\nSetup Timing:")
         print(f"  Taichi Init: {self.timing['taichi_init']*1000:6.2f}ms | Scene Compile: {self.timing['scene_compile']*1000:6.2f}ms")
         print(f"  BVH Flatten: {self.timing['bvh_flatten']*1000:6.2f}ms | Camera Upload: {self.timing['camera_upload']*1000:6.2f}ms")
@@ -248,7 +358,7 @@ class InteractiveViewer(TaichiRenderer):
         self.setup_interactive_preview(update_interval_ms=16)
 
         # Calculate display interval (every 5%)
-        display_interval = max(1, self.max_samples // 20)  # 20 updates = every 5%
+        display_interval = max(1, self.cam.samples_per_pixel // 20)  # 20 updates = every 5%
         total_pixels = self.cam.img_width * self.cam.img_height
 
         print(f"\nRendering Progress:")
@@ -263,7 +373,7 @@ class InteractiveViewer(TaichiRenderer):
         try:
             while self.preview_window is not None:
                 # Only render if we haven't reached max samples
-                if self.is_rendering_active and self.current_sample < self.max_samples:
+                if self.is_rendering_active and self.current_sample < self.cam.samples_per_pixel:
                     # Time this sample
                     sample_start = time.time()
 
@@ -283,7 +393,7 @@ class InteractiveViewer(TaichiRenderer):
                     # Print progress at intervals (5% increments)
                     should_display = (self.current_sample % display_interval == 0 or
                                     self.current_sample == 1 or
-                                    self.current_sample >= self.max_samples)
+                                    self.current_sample >= self.cam.samples_per_pixel)
                     if should_display:
                         elapsed = time.time() - self.render_start_time
 
@@ -291,22 +401,23 @@ class InteractiveViewer(TaichiRenderer):
                         throughput = total_pixels / avg_time if avg_time > 0 else 0
 
                         # Calculate ETA
-                        remaining_samples = self.max_samples - self.current_sample
+                        remaining_samples = self.cam.samples_per_pixel - self.current_sample
                         eta = remaining_samples * avg_time
 
                         # Progress percentage
-                        progress = self.current_sample / self.max_samples * 100
+                        progress = self.current_sample / self.cam.samples_per_pixel * 100
 
-                        print(f"{self.current_sample:4d}/{self.max_samples} ({progress:5.1f}%) │ "
+                        print(f"{self.current_sample:4d}/{self.cam.samples_per_pixel} ({progress:5.1f}%) │ "
                               f"{sample_time*1000:5.1f}ms │ "
                               f"Elapsed: {elapsed:5.1f}s │ "
                               f"Throughput: {throughput/1e6:5.2f}M pix/s │ "
                               f"ETA: {eta:4.1f}s")
 
                     # Check if we've reached max samples
-                    if self.current_sample >= self.max_samples:
+                    if self.current_sample >= self.cam.samples_per_pixel:
                         print(f"{'─'*60}")
-                        print(f"✓ Reached max samples ({self.max_samples})")
+                        print(f"✓ Reached max samples ({self.cam.samples_per_pixel})")
+                        self._print_render_summary()
                         print("  Window remains open - drag mouse to rotate camera and restart rendering")
                         self.is_rendering_active = False
 
@@ -323,8 +434,10 @@ class InteractiveViewer(TaichiRenderer):
 
         finally:
             # Final sync and write image
-            print(f"\nFinal sample count: {self.current_sample}")
-            print("Saving final image...")
+            print(f"\n{'─'*60}")
+            print(f"Final sample count: {self.current_sample}")
+            self._print_render_summary()
+            print("\nSaving final image...")
             self._sync_gpu_to_cpu()
             self.write_image()
             print(f"✓ Image saved to {self.img_path}")
