@@ -129,7 +129,7 @@ def flatten_bvh(bvh_root, sphere_mapping: Dict[int, int]) -> Dict[str, np.ndarra
     }
 
 
-def compile_bvh(world, spheres: List, quads: List = None) -> Dict[str, np.ndarray]:
+def compile_bvh(world, spheres: List, quads: List = None, triangles: List = None) -> Dict[str, np.ndarray]:
     """
     Main entry point for BVH compilation.
 
@@ -137,24 +137,27 @@ def compile_bvh(world, spheres: List, quads: List = None) -> Dict[str, np.ndarra
         world: The world object (contains BVH structure)
         spheres: List of spheres (for creating index mapping)
         quads: List of quads (optional, for mixed primitive scenes)
+        triangles: List of triangles (optional, for mixed primitive scenes)
 
     Returns: dict of numpy arrays ready for GPU upload
     """
     if quads is None:
         quads = []
+    if triangles is None:
+        triangles = []
 
-    total_prims = len(spheres) + len(quads)
+    total_prims = len(spheres) + len(quads) + len(triangles)
 
     if USE_SAH_BVH:
         # Use new SAH BVH builder (2-3x faster traversal)
-        print(f"Building SAH BVH with {total_prims} primitives ({len(spheres)} spheres, {len(quads)} quads)...")
-        if len(quads) > 0:
-            return build_sah_bvh_from_primitives(spheres, quads)
+        print(f"Building SAH BVH with {total_prims} primitives ({len(spheres)} spheres, {len(quads)} quads, {len(triangles)} triangles)...")
+        if len(quads) > 0 or len(triangles) > 0:
+            return build_sah_bvh_from_primitives(spheres, quads, triangles)
         else:
             return build_sah_bvh_from_spheres(spheres)
     else:
         # Legacy median-split BVH (only supports spheres)
-        print(f"Using legacy BVH with {len(spheres)} spheres (quads not supported in legacy mode)...")
+        print(f"Using legacy BVH with {len(spheres)} spheres (quads and triangles not supported in legacy mode)...")
         sphere_mapping = create_sphere_mapping(spheres)
 
         # Find actual BVH root (might be wrapped in hittable_list)

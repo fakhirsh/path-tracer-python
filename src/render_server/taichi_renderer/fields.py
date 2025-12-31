@@ -25,10 +25,13 @@ MAX_DEPTH = 50
 sphere_data = ti.Vector.field(4, ti.f32, MAX_SPHERES)  # [cx, cy, cz, radius]
 num_spheres = ti.field(ti.i32, shape=())
 
-# Triangles (for future use - define fields but leave unpopulated)
+# Triangles
 triangle_v0 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
 triangle_v1 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
 triangle_v2 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
+triangle_edge1 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
+triangle_edge2 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
+triangle_normal = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
 num_triangles = ti.field(ti.i32, shape=())
 
 # Quads: Q (corner), u (first edge), v (second edge), normal, D, w
@@ -84,6 +87,12 @@ quad_material_albedo = ti.Vector.field(3, ti.f32, MAX_QUADS)
 quad_material_fuzz = ti.field(ti.f32, MAX_QUADS)
 quad_material_ir = ti.field(ti.f32, MAX_QUADS)
 
+# Triangle Materials
+triangle_material_type = ti.field(ti.i32, MAX_TRIANGLES)
+triangle_material_albedo = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
+triangle_material_fuzz = ti.field(ti.f32, MAX_TRIANGLES)
+triangle_material_ir = ti.field(ti.f32, MAX_TRIANGLES)
+
 # =============================================================================
 # COLD DATA: Textures
 # =============================================================================
@@ -99,6 +108,12 @@ quad_texture_type = ti.field(ti.i32, MAX_QUADS)
 quad_texture_scale = ti.field(ti.f32, MAX_QUADS)
 quad_texture_color1 = ti.Vector.field(3, ti.f32, MAX_QUADS)
 quad_texture_color2 = ti.Vector.field(3, ti.f32, MAX_QUADS)
+
+# Triangle Textures
+triangle_texture_type = ti.field(ti.i32, MAX_TRIANGLES)
+triangle_texture_scale = ti.field(ti.f32, MAX_TRIANGLES)
+triangle_texture_color1 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
+triangle_texture_color2 = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
 
 # =============================================================================
 # CAMERA

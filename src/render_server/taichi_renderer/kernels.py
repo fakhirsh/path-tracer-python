@@ -179,10 +179,57 @@ def hit_triangle(tri_idx: ti.i32, ray_origin: ti.math.vec3, ray_dir: ti.math.vec
     """
     Test ray-triangle intersection using Möller–Trumbore algorithm.
     Returns: (hit, t, hit_point, normal)
-    FOR FUTURE USE - implement skeleton now.
     """
-    # Return no-hit for now
-    return False, 0.0, ti.math.vec3(0.0), ti.math.vec3(0.0)
+    epsilon = 1e-8
+
+    # Get triangle data
+    v0 = fields.triangle_v0[tri_idx]
+    edge1 = fields.triangle_edge1[tri_idx]
+    edge2 = fields.triangle_edge2[tri_idx]
+    normal = fields.triangle_normal[tri_idx]
+
+    # Compute determinant
+    h = ray_dir.cross(edge2)
+    det = edge1.dot(h)
+
+    hit = False
+    t = 0.0
+    hit_point = ti.math.vec3(0.0)
+    hit_normal = ti.math.vec3(0.0)
+
+    # Ray is parallel to triangle
+    if ti.abs(det) >= epsilon:
+        inv_det = 1.0 / det
+
+        # Compute u parameter
+        s = ray_origin - v0
+        u = inv_det * s.dot(h)
+
+        if u >= 0.0 and u <= 1.0:
+            # Compute v parameter
+            q = s.cross(edge1)
+            v = inv_det * ray_dir.dot(q)
+
+            if v >= 0.0 and u + v <= 1.0:
+                # Compute t
+                t_temp = inv_det * edge2.dot(q)
+
+                if t_temp >= t_min and t_temp <= t_max:
+                    # We have a valid intersection
+                    hit = True
+                    t = t_temp
+                    hit_point = ray_origin + t * ray_dir
+
+                    # Determine front/back face (same logic as set_face_normal)
+                    # If ray and normal point in same direction, we hit the back face
+                    if ray_dir.dot(normal) > 0.0:
+                        # Back face - flip normal
+                        hit_normal = -normal
+                    else:
+                        # Front face - keep normal
+                        hit_normal = normal
+
+    return hit, t, hit_point, hit_normal
 
 
 @ti.func
@@ -549,6 +596,8 @@ def scatter(ray_dir: ti.math.vec3, hit_point: ti.math.vec3, normal: ti.math.vec3
     mat_type = 0
     if prim_type == 0:  # PRIM_SPHERE
         mat_type = fields.material_type[prim_idx]
+    elif prim_type == 1:  # PRIM_TRIANGLE
+        mat_type = fields.triangle_material_type[prim_idx]
     elif prim_type == 2:  # PRIM_QUAD
         mat_type = fields.quad_material_type[prim_idx]
 
@@ -574,6 +623,9 @@ def scatter(ray_dir: ti.math.vec3, hit_point: ti.math.vec3, normal: ti.math.vec3
         if prim_type == 0:  # PRIM_SPHERE
             albedo = fields.material_albedo[prim_idx]
             fuzz = fields.material_fuzz[prim_idx]
+        elif prim_type == 1:  # PRIM_TRIANGLE
+            albedo = fields.triangle_material_albedo[prim_idx]
+            fuzz = fields.triangle_material_fuzz[prim_idx]
         else:  # PRIM_QUAD
             albedo = fields.quad_material_albedo[prim_idx]
             fuzz = fields.quad_material_fuzz[prim_idx]
@@ -590,6 +642,8 @@ def scatter(ray_dir: ti.math.vec3, hit_point: ti.math.vec3, normal: ti.math.vec3
     elif mat_type == 2:
         if prim_type == 0:  # PRIM_SPHERE
             ir = fields.material_ir[prim_idx]
+        elif prim_type == 1:  # PRIM_TRIANGLE
+            ir = fields.triangle_material_ir[prim_idx]
         else:  # PRIM_QUAD
             ir = fields.quad_material_ir[prim_idx]
 
@@ -641,6 +695,11 @@ def eval_texture(prim_type: ti.i32, prim_idx: ti.i32, hit_point: ti.math.vec3) -
         color1 = fields.texture_color1[prim_idx]
         color2 = fields.texture_color2[prim_idx]
         scale = fields.texture_scale[prim_idx]
+    elif prim_type == 1:  # PRIM_TRIANGLE
+        tex_type = fields.triangle_texture_type[prim_idx]
+        color1 = fields.triangle_texture_color1[prim_idx]
+        color2 = fields.triangle_texture_color2[prim_idx]
+        scale = fields.triangle_texture_scale[prim_idx]
     elif prim_type == 2:  # PRIM_QUAD
         tex_type = fields.quad_texture_type[prim_idx]
         color1 = fields.quad_texture_color1[prim_idx]

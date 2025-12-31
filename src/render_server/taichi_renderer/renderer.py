@@ -73,25 +73,25 @@ class TaichiRenderer:
 
         # Compile scene
         t0 = time.time()
-        geometry_data, material_data, spheres, quad_geometry_data, quad_material_data, quads = compile_scene(world)
+        geometry_data, material_data, spheres, quad_geometry_data, quad_material_data, quads, triangle_geometry_data, triangle_material_data, triangles = compile_scene(world)
         self.timing['scene_compile'] = time.time() - t0
 
         # Compile BVH
         t0 = time.time()
-        bvh_data = compile_bvh(world, spheres, quads)
+        bvh_data = compile_bvh(world, spheres, quads, triangles)
         self.timing['bvh_compile'] = time.time() - t0
         self.timing['bvh_flatten'] = self.timing['bvh_compile']  # Alias for compatibility
 
         # Upload to GPU
         t0 = time.time()
-        self._upload_to_gpu(geometry_data, material_data, quad_geometry_data, quad_material_data, bvh_data)
+        self._upload_to_gpu(geometry_data, material_data, quad_geometry_data, quad_material_data, triangle_geometry_data, triangle_material_data, bvh_data)
         self._upload_camera()
         self.timing['gpu_upload'] = time.time() - t0
         self.timing['camera_upload'] = self.timing['gpu_upload']  # Alias for compatibility
 
         self.timing['total_setup'] = time.time() - setup_start
 
-    def _upload_to_gpu(self, geometry: dict, materials: dict, quad_geometry: dict, quad_materials: dict, bvh: dict):
+    def _upload_to_gpu(self, geometry: dict, materials: dict, quad_geometry: dict, quad_materials: dict, triangle_geometry: dict, triangle_materials: dict, bvh: dict):
         """Upload compiled numpy arrays to Taichi fields"""
         # Sphere Geometry
         n = geometry['num_spheres']
@@ -137,6 +137,31 @@ class TaichiRenderer:
             fields.quad_texture_scale[i] = quad_materials['texture_scale'][i]
             fields.quad_texture_color1[i] = quad_materials['texture_color1'][i]
             fields.quad_texture_color2[i] = quad_materials['texture_color2'][i]
+
+        # Triangle Geometry
+        nt = triangle_geometry['num_triangles']
+        for i in range(nt):
+            fields.triangle_v0[i] = triangle_geometry['triangle_v0'][i]
+            fields.triangle_v1[i] = triangle_geometry['triangle_v1'][i]
+            fields.triangle_v2[i] = triangle_geometry['triangle_v2'][i]
+            fields.triangle_edge1[i] = triangle_geometry['triangle_edge1'][i]
+            fields.triangle_edge2[i] = triangle_geometry['triangle_edge2'][i]
+            fields.triangle_normal[i] = triangle_geometry['triangle_normal'][i]
+        fields.num_triangles[None] = nt
+
+        # Triangle Materials
+        for i in range(nt):
+            fields.triangle_material_type[i] = triangle_materials['material_type'][i]
+            fields.triangle_material_albedo[i] = triangle_materials['material_albedo'][i]
+            fields.triangle_material_fuzz[i] = triangle_materials['material_fuzz'][i]
+            fields.triangle_material_ir[i] = triangle_materials['material_ir'][i]
+
+        # Triangle Textures
+        for i in range(nt):
+            fields.triangle_texture_type[i] = triangle_materials['texture_type'][i]
+            fields.triangle_texture_scale[i] = triangle_materials['texture_scale'][i]
+            fields.triangle_texture_color1[i] = triangle_materials['texture_color1'][i]
+            fields.triangle_texture_color2[i] = triangle_materials['texture_color2'][i]
 
         # BVH - Upload to PACKED structure (new optimized format)
         bvh_n = bvh['num_bvh_nodes']

@@ -142,6 +142,28 @@ class SAHBVHBuilder:
         )
         self.primitives.append(prim)
 
+    def add_triangle(self, tri_idx: int, v0: np.ndarray, v1: np.ndarray, v2: np.ndarray):
+        """Add a triangle primitive to the builder"""
+        # Compute bounding box from the three vertices
+        vertices = [v0, v1, v2]
+        min_corner = np.min(vertices, axis=0)
+        max_corner = np.max(vertices, axis=0)
+
+        bbox = AABB(min=min_corner, max=max_corner)
+        # Pad thin dimensions to avoid numerical issues (triangles are planar)
+        bbox.pad_to_minimums()
+
+        # Centroid is the center of the triangle
+        centroid = (v0 + v1 + v2) / 3.0
+
+        prim = Primitive(
+            prim_type=PRIM_TRIANGLE,
+            prim_idx=tri_idx,
+            bbox=bbox,
+            centroid=centroid.copy()
+        )
+        self.primitives.append(prim)
+
     def build(self) -> SAHBVHNode:
         """
         Build BVH tree using SAH.
@@ -418,16 +440,20 @@ def build_sah_bvh_from_spheres(spheres: List) -> Dict[str, np.ndarray]:
     return builder.flatten()
 
 
-def build_sah_bvh_from_primitives(spheres: List, quads: List) -> Dict[str, np.ndarray]:
+def build_sah_bvh_from_primitives(spheres: List, quads: List, triangles: List = None) -> Dict[str, np.ndarray]:
     """
-    Build SAH BVH from mixed primitive types (spheres and quads).
+    Build SAH BVH from mixed primitive types (spheres, quads, and triangles).
 
     Args:
         spheres: List of Sphere objects from scene
         quads: List of quad objects from scene
+        triangles: List of triangle objects from scene
 
     Returns: Flattened BVH arrays ready for GPU upload
     """
+    if triangles is None:
+        triangles = []
+
     builder = SAHBVHBuilder()
 
     # Add all spheres to builder
@@ -442,6 +468,13 @@ def build_sah_bvh_from_primitives(spheres: List, quads: List) -> Dict[str, np.nd
         u_np = np.array([q.u.x, q.u.y, q.u.z], dtype=np.float32)
         v_np = np.array([q.v.x, q.v.y, q.v.z], dtype=np.float32)
         builder.add_quad(i, Q_np, u_np, v_np)
+
+    # Add all triangles to builder
+    for i, tri in enumerate(triangles):
+        v0_np = np.array([tri.v0.x, tri.v0.y, tri.v0.z], dtype=np.float32)
+        v1_np = np.array([tri.v1.x, tri.v1.y, tri.v1.z], dtype=np.float32)
+        v2_np = np.array([tri.v2.x, tri.v2.y, tri.v2.z], dtype=np.float32)
+        builder.add_triangle(i, v0_np, v1_np, v2_np)
 
     # Build BVH
     builder.build()

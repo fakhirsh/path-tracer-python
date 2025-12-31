@@ -79,6 +79,35 @@ def extract_quads(world) -> List:
     return quads
 
 
+def extract_triangles(world) -> List:
+    """
+    Recursively extract all triangle objects from world hierarchy.
+    Handles: triangle, hittable_list, bvh_node
+    Returns: List of triangle objects
+    """
+    from core.triangle import triangle
+    from core.hittable_list import hittable_list
+    from core.bvh_node import bvh_node
+
+    triangles = []
+
+    # Check if this is a triangle
+    if isinstance(world, triangle):
+        triangles.append(world)
+    # Check if this is a hittable_list
+    elif isinstance(world, hittable_list):
+        for item in world.objects:
+            triangles.extend(extract_triangles(item))
+    # Check if this is a bvh_node
+    elif isinstance(world, bvh_node):
+        if world.left is not None:
+            triangles.extend(extract_triangles(world.left))
+        if world.right is not None:
+            triangles.extend(extract_triangles(world.right))
+
+    return triangles
+
+
 def compile_geometry(spheres: List) -> Dict[str, np.ndarray]:
     """
     Pack sphere geometry into numpy arrays for GPU upload.
@@ -141,6 +170,46 @@ def compile_quad_geometry(quads: List) -> Dict[str, np.ndarray]:
         'quad_D': quad_D,
         'quad_w': quad_w,
         'num_quads': n
+    }
+
+
+def compile_triangle_geometry(triangles: List) -> Dict[str, np.ndarray]:
+    """
+    Pack triangle geometry into numpy arrays for GPU upload.
+
+    Returns dict with:
+        'triangle_v0': np.ndarray of shape (N, 3) dtype=float32  # First vertex
+        'triangle_v1': np.ndarray of shape (N, 3) dtype=float32  # Second vertex
+        'triangle_v2': np.ndarray of shape (N, 3) dtype=float32  # Third vertex
+        'triangle_edge1': np.ndarray of shape (N, 3) dtype=float32  # Edge v1 - v0
+        'triangle_edge2': np.ndarray of shape (N, 3) dtype=float32  # Edge v2 - v0
+        'triangle_normal': np.ndarray of shape (N, 3) dtype=float32
+        'num_triangles': int
+    """
+    n = len(triangles)
+    triangle_v0 = np.zeros((n, 3), dtype=np.float32)
+    triangle_v1 = np.zeros((n, 3), dtype=np.float32)
+    triangle_v2 = np.zeros((n, 3), dtype=np.float32)
+    triangle_edge1 = np.zeros((n, 3), dtype=np.float32)
+    triangle_edge2 = np.zeros((n, 3), dtype=np.float32)
+    triangle_normal = np.zeros((n, 3), dtype=np.float32)
+
+    for i, tri in enumerate(triangles):
+        triangle_v0[i] = [tri.v0.x, tri.v0.y, tri.v0.z]
+        triangle_v1[i] = [tri.v1.x, tri.v1.y, tri.v1.z]
+        triangle_v2[i] = [tri.v2.x, tri.v2.y, tri.v2.z]
+        triangle_edge1[i] = [tri.edge1.x, tri.edge1.y, tri.edge1.z]
+        triangle_edge2[i] = [tri.edge2.x, tri.edge2.y, tri.edge2.z]
+        triangle_normal[i] = [tri.normal.x, tri.normal.y, tri.normal.z]
+
+    return {
+        'triangle_v0': triangle_v0,
+        'triangle_v1': triangle_v1,
+        'triangle_v2': triangle_v2,
+        'triangle_edge1': triangle_edge1,
+        'triangle_edge2': triangle_edge2,
+        'triangle_normal': triangle_normal,
+        'num_triangles': n
     }
 
 
@@ -376,7 +445,124 @@ def compile_quad_materials(quads: List) -> Dict[str, np.ndarray]:
     }
 
 
-def compile_scene(world) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List, Dict[str, np.ndarray], List]:
+def compile_triangle_materials(triangles: List) -> Dict[str, np.ndarray]:
+    """
+    Extract material properties from triangles.
+    Similar to compile_materials but for triangles.
+
+    Returns dict with:
+        'material_type': np.ndarray of shape (N,) dtype=int32
+        'material_albedo': np.ndarray of shape (N, 3) dtype=float32
+        'material_fuzz': np.ndarray of shape (N,) dtype=float32
+        'material_ir': np.ndarray of shape (N,) dtype=float32
+        'texture_type': np.ndarray of shape (N,) dtype=int32
+        'texture_scale': np.ndarray of shape (N,) dtype=float32
+        'texture_color1': np.ndarray of shape (N, 3) dtype=float32
+        'texture_color2': np.ndarray of shape (N, 3) dtype=float32
+    """
+    n = len(triangles)
+
+    material_type = np.zeros(n, dtype=np.int32)
+    material_albedo = np.zeros((n, 3), dtype=np.float32)
+    material_fuzz = np.zeros(n, dtype=np.float32)
+    material_ir = np.zeros(n, dtype=np.float32)
+
+    texture_type = np.zeros(n, dtype=np.int32)
+    texture_scale = np.ones(n, dtype=np.float32)
+    texture_color1 = np.zeros((n, 3), dtype=np.float32)
+    texture_color2 = np.zeros((n, 3), dtype=np.float32)
+
+    for i, tri in enumerate(triangles):
+        mat = tri.mat
+        mat_type_name = type(mat).__name__
+        # Use first vertex as reference point for texture sampling
+        ref_point = tri.v0
+
+        if mat_type_name == 'lambertian':
+            material_type[i] = MAT_LAMBERTIAN
+
+            # Extract texture information
+            tex_type_name = type(mat.tex).__name__
+
+            if tex_type_name == 'checker_texture':
+                # Checker texture - store scale and two colors
+                texture_type[i] = TEX_CHECKER
+                texture_scale[i] = 1.0 / mat.tex.inv_scale  # Convert back to scale
+
+                # Get the two colors from even and odd textures
+                color1 = mat.tex.even.value(0, 0, ref_point)
+                color2 = mat.tex.odd.value(0, 0, ref_point)
+                texture_color1[i] = [color1.x, color1.y, color1.z]
+                texture_color2[i] = [color2.x, color2.y, color2.z]
+
+                # Set albedo to white (will be overridden by texture evaluation)
+                material_albedo[i] = [1.0, 1.0, 1.0]
+            else:
+                # Solid color or other texture - sample once
+                texture_type[i] = TEX_SOLID
+                try:
+                    mat_color = mat.tex.value(0, 0, ref_point)
+                    material_albedo[i] = [mat_color.x, mat_color.y, mat_color.z]
+                    texture_color1[i] = [mat_color.x, mat_color.y, mat_color.z]
+                    texture_color2[i] = [mat_color.x, mat_color.y, mat_color.z]
+                except:
+                    material_albedo[i] = [0.8, 0.8, 0.8]
+                    texture_color1[i] = [0.8, 0.8, 0.8]
+                    texture_color2[i] = [0.8, 0.8, 0.8]
+
+            material_fuzz[i] = 0.0
+            material_ir[i] = 1.0
+
+        elif mat_type_name == 'metal':
+            material_type[i] = MAT_METAL
+            material_albedo[i] = [mat.albedo.x, mat.albedo.y, mat.albedo.z]
+            material_fuzz[i] = mat.fuzz
+            material_ir[i] = 1.0
+
+            # Initialize texture fields (not used for metal)
+            texture_type[i] = TEX_SOLID
+            texture_scale[i] = 1.0
+            texture_color1[i] = [mat.albedo.x, mat.albedo.y, mat.albedo.z]
+            texture_color2[i] = [mat.albedo.x, mat.albedo.y, mat.albedo.z]
+
+        elif mat_type_name == 'dielectric':
+            material_type[i] = MAT_DIELECTRIC
+            material_albedo[i] = [1.0, 1.0, 1.0]  # Dielectric is always white
+            material_fuzz[i] = 0.0
+            material_ir[i] = mat.ir
+
+            # Initialize texture fields (not used for dielectric)
+            texture_type[i] = TEX_SOLID
+            texture_scale[i] = 1.0
+            texture_color1[i] = [1.0, 1.0, 1.0]
+            texture_color2[i] = [1.0, 1.0, 1.0]
+
+        else:
+            # Unsupported material - default to lambertian
+            material_type[i] = MAT_LAMBERTIAN
+            material_albedo[i] = [0.8, 0.8, 0.8]
+            material_fuzz[i] = 0.0
+            material_ir[i] = 1.0
+
+            # Initialize texture fields
+            texture_type[i] = TEX_SOLID
+            texture_scale[i] = 1.0
+            texture_color1[i] = [0.8, 0.8, 0.8]
+            texture_color2[i] = [0.8, 0.8, 0.8]
+
+    return {
+        'material_type': material_type,
+        'material_albedo': material_albedo,
+        'material_fuzz': material_fuzz,
+        'material_ir': material_ir,
+        'texture_type': texture_type,
+        'texture_scale': texture_scale,
+        'texture_color1': texture_color1,
+        'texture_color2': texture_color2
+    }
+
+
+def compile_scene(world) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List, Dict[str, np.ndarray], List, Dict[str, np.ndarray], List]:
     """
     Main entry point: compile entire scene.
 
@@ -385,10 +571,15 @@ def compile_scene(world) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], 
         material_data: dict of numpy arrays (sphere materials)
         spheres: list of sphere objects (needed for BVH compiler)
         quad_geometry_data: dict of numpy arrays (quads)
+        quad_materials: dict of numpy arrays (quad materials)
         quads: list of quad objects (needed for BVH compiler)
+        triangle_geometry_data: dict of numpy arrays (triangles)
+        triangle_materials: dict of numpy arrays (triangle materials)
+        triangles: list of triangle objects (needed for BVH compiler)
     """
     spheres = extract_spheres(world)
     quads = extract_quads(world)
+    triangles = extract_triangles(world)
 
     geometry = compile_geometry(spheres)
     materials = compile_materials(spheres)
@@ -396,4 +587,7 @@ def compile_scene(world) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], 
     quad_geometry = compile_quad_geometry(quads)
     quad_materials = compile_quad_materials(quads)
 
-    return geometry, materials, spheres, quad_geometry, quad_materials, quads
+    triangle_geometry = compile_triangle_geometry(triangles)
+    triangle_materials = compile_triangle_materials(triangles)
+
+    return geometry, materials, spheres, quad_geometry, quad_materials, quads, triangle_geometry, triangle_materials, triangles
