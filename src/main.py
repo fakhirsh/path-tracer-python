@@ -10,8 +10,9 @@ import pstats
 
 def main():
     # Change this to test different scenes
-    # vol2_final_scene()  # Original final scene
-    wavefront_comparison()  # Compare megakernel vs wavefront
+    # vol2_final_scene()  # Original final scene (interactive)
+    # wavefront_comparison()  # Compare on simple scene (41 spheres)
+    vol2_final_scene_comparison()  # Compare on complex scene (1000+ objects)
 
 #------------------------------------------------------------------------
 

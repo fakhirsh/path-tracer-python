@@ -1129,6 +1129,169 @@ def vol2_final_scene_simple():
 
 #------------------------------------------------------------------------
 
+def vol2_final_scene_comparison():
+    """
+    Compare megakernel vs wavefront on the complex vol2_final_scene.
+    This scene has 1000+ objects and should show wavefront's benefits.
+    """
+    # Ground boxes
+    boxes1 = hittable_list()
+    ground = lambertian.from_color(color(0.48, 0.83, 0.53))
+
+    boxes_per_side = 20
+    for i in range(boxes_per_side):
+        for j in range(boxes_per_side):
+            w = 100.0
+            x0 = -1000.0 + i * w
+            z0 = -1000.0 + j * w
+            y0 = 0.0
+            x1 = x0 + w
+            y1 = random.uniform(1, 101)
+            z1 = z0 + w
+
+            boxes1.add(box(point3(x0, y0, z0), point3(x1, y1, z1), ground))
+
+    world = hittable_list()
+
+    # Add ground boxes as BVH
+    world.add(bvh_node.from_objects(boxes1.objects, 0, len(boxes1.objects)))
+
+    # Light
+    light = diffuse_light.from_color(color(7, 7, 7))
+    world.add(quad(point3(123, 554, 147), vec3(300, 0, 0), vec3(0, 0, 265), light))
+
+    # Moving sphere
+    center1 = point3(400, 400, 200)
+    center2 = center1 + vec3(30, 0, 0)
+    sphere_material = lambertian.from_color(color(0.7, 0.3, 0.1))
+    world.add(Sphere.moving(center1, center2, 50, sphere_material))
+
+    # Glass sphere
+    world.add(Sphere.stationary(point3(260, 150, 45), 50, dielectric(1.5)))
+
+    # Metal sphere
+    world.add(Sphere.stationary(
+        point3(0, 150, 145), 50, metal(color(0.8, 0.8, 0.9), 1.0)
+    ))
+
+    # Glass sphere with volume inside
+    boundary = Sphere.stationary(point3(360, 150, 145), 70, dielectric(1.5))
+    world.add(boundary)
+    world.add(constant_medium.from_color(boundary, color(0.2, 0.4, 0.9), 0.2))
+
+    # Global fog
+    boundary = Sphere.stationary(point3(0, 0, 0), 5000, dielectric(1.5))
+    world.add(constant_medium.from_color(boundary, color(1, 1, 1), 0.0001))
+
+    # Earth sphere
+    emat = lambertian.from_texture(image_texture("assets/images/earthmap.jpg"))
+    world.add(Sphere.stationary(point3(400, 200, 400), 100, emat))
+
+    # Perlin noise sphere
+    pertext = noise_texture(0.2)
+    world.add(Sphere.stationary(point3(220, 280, 300), 80, lambertian.from_texture(pertext)))
+
+    # Box of spheres (1000 small spheres - main complexity source)
+    boxes2 = hittable_list()
+    white = lambertian.from_color(color(0.73, 0.73, 0.73))
+    ns = 1000
+    offset = vec3(-100, 270, 395)
+    for j in range(ns):
+        random_pos = point3.random(0, 165)
+        boxes2.add(Sphere.stationary(random_pos + offset, 10, white))
+
+    world.add(bvh_node.from_objects(boxes2.objects, 0, len(boxes2.objects)))
+
+    # Create final BVH
+    bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
+    world = hittable_list()
+    world.add(bvh)
+
+    # Camera setup - reduced resolution and samples for faster comparison
+    cam = camera()
+    cam.aspect_ratio = 1.0
+    cam.img_width = 1000  # Reduced from 1000 for faster testing
+    cam.samples_per_pixel = 1000  # Reduced from 10000 for faster testing
+
+    cam.vfov = 40
+    cam.lookfrom = point3(478, 278, -600)
+    cam.lookat = point3(278, 278, 0)
+    cam.vup = vec3(0, 1, 0)
+    cam.defocus_angle = 0
+
+    # Test 1: Megakernel (traditional depth-first)
+    print("\n" + "="*80)
+    print("TEST 1: MEGAKERNEL MODE on vol2_final_scene (1000+ objects)")
+    print("="*80)
+
+    # renderer = RendererFactory.create(
+    #     'taichi',
+    #     world,
+    #     cam,
+    #     "../temp/vol2_final_megakernel.png"
+    # )
+    # renderer.background_color = color(0, 0, 0)
+    # renderer.max_depth = 50
+
+    # start_mega = time.time()
+    # renderer.render(enable_preview=True)  # <-- MEGAKERNEL: calls render() method
+    # time_mega = time.time() - start_mega
+
+    # Interactive rendering with mouse controls
+    viewer = InteractiveViewer(
+        world,
+        cam,
+        "../temp/vol2_final_interactive.png"
+    )
+    viewer.background_color = color(0, 0, 0)
+    viewer.max_depth = 50
+
+    print("\nInteractive Controls:")
+    print("  - Left-click and drag to rotate camera")
+    print("  - Close window to exit and save final image")
+    print()
+
+    viewer.render_interactive()
+
+    # # Test 2: Wavefront (breadth-first)
+    # # NOTE: Same TaichiRenderer class, just calling a different method!
+    # print("\n" + "="*80)
+    # print("TEST 2: WAVEFRONT MODE on vol2_final_scene (1000+ objects)")
+    # print("="*80)
+
+    # # Re-create renderer to get fresh state (clear accumulation buffer)
+    # renderer = RendererFactory.create(
+    #     'taichi',
+    #     world,
+    #     cam,
+    #     "../temp/vol2_final_wavefront.png"
+    # )
+    # renderer.background_color = color(0, 0, 0)
+    # renderer.max_depth = 50
+
+    # start_wave = time.time()
+    # renderer.render_wavefront(enable_preview=False)  # <-- WAVEFRONT: calls render_wavefront() method
+    # time_wave = time.time() - start_wave
+
+    # # Print comparison
+    # print("\n" + "="*80)
+    # print("PERFORMANCE COMPARISON - COMPLEX SCENE")
+    # print("="*80)
+    # print(f"Scene complexity: 1000+ spheres, volumes, textures, complex materials")
+    # print(f"Resolution: {cam.img_width}x{cam.img_width} | Samples: {cam.samples_per_pixel}")
+    # print(f"\nMegakernel Time:  {time_mega:.2f}s")
+    # print(f"Wavefront Time:   {time_wave:.2f}s")
+    # if time_wave < time_mega:
+    #     print(f"Speedup:          {time_mega/time_wave:.2f}x (wavefront is FASTER!)")
+    # else:
+    #     print(f"Slowdown:         {time_wave/time_mega:.2f}x (megakernel still faster)")
+    # print(f"\nImages saved to:")
+    # print(f"  - ../temp/vol2_final_megakernel.png")
+    # print(f"  - ../temp/vol2_final_wavefront.png")
+    # print("="*80)
+
+#------------------------------------------------------------------------
+
 def wavefront_comparison():
     """
     Compare megakernel vs wavefront path tracing performance.

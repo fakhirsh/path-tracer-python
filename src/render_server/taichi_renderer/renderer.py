@@ -271,9 +271,11 @@ class TaichiRenderer:
         ti.sync()
         kernels.intersect_rays()
         ti.sync()
-        kernels.shade_miss_rays()
+        kernels.shade_miss_rays(self.cam.img_width)
         ti.sync()
-        kernels.shade_and_scatter()
+        kernels.reset_next_ray_count()
+        ti.sync()
+        kernels.shade_and_scatter(self.cam.img_width)
         ti.sync()
         kernels.swap_ray_buffers()
         ti.sync()
@@ -318,10 +320,13 @@ class TaichiRenderer:
                 kernels.intersect_rays()
 
                 # Shade misses (add background)
-                kernels.shade_miss_rays()
+                kernels.shade_miss_rays(self.cam.img_width)
+
+                # Reset next ray counter
+                kernels.reset_next_ray_count()
 
                 # Shade hits and generate scattered rays
-                kernels.shade_and_scatter()
+                kernels.shade_and_scatter(self.cam.img_width)
 
                 # Swap buffers for next iteration
                 kernels.swap_ray_buffers()

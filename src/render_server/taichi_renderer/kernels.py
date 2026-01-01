@@ -1264,163 +1264,133 @@ def intersect_rays():
 
 
 @ti.kernel
-def shade_miss_rays():
+def shade_miss_rays(img_width: ti.i32):
     """
     Process rays that missed the scene - add background color.
+    OPTIMIZED: No atomics, direct write (assumes one ray per pixel per sample).
     """
     for i in range(fields.active_ray_count[None]):
         if fields.hit_valid[i] == 0:  # Ray missed
             pixel_idx = fields.ray_pixel_index[i]
 
-            # Convert linear pixel index to (py, px)
-            # Note: pixel_idx = py * width + px, so we need image width
-            # For now, we'll use atomic add directly to the pixel
-            # The accumulation happens in the caller
-
             # Add background contribution
-            contribution = fields.ray_throughput[i] * fields.bg_color[None]
-
-            # Get image dimensions from accum_buffer shape
-            img_height, img_width = fields.accum_buffer.shape
+            # Direct write - safe because only one ray per pixel per sample
             py = pixel_idx // img_width
             px = pixel_idx % img_width
-
-            ti.atomic_add(fields.accum_buffer[py, px], contribution)
+            fields.accum_buffer[py, px] += fields.ray_throughput[i] * fields.bg_color[None]
 
 
 @ti.kernel
-def shade_and_scatter():
+def reset_next_ray_count():
+    """Reset next ray counter before shading."""
+    fields.next_ray_count[None] = 0
+
+
+@ti.kernel
+def shade_and_scatter(img_width: ti.i32):
     """
     Shade all rays that hit geometry and generate scattered rays.
-    This handles emission, material scattering, and generates new rays for the next bounce.
-    Handles constant mediums (volumes) as well.
-
-    Russian Roulette is applied after minimum depth.
+    OPTIMIZED: Minimal atomics, direct accumulation where safe.
     """
-    # Reset next wave counter
-    if ti.static(True):  # Run once before parallel loop
-        fields.next_ray_count[None] = 0
-
     for i in range(fields.active_ray_count[None]):
         if fields.hit_valid[i] == 1:  # Ray hit something
-            # Get ray info
+            # Load ray state
             current_origin = fields.ray_origins[i]
             current_dir = fields.ray_directions[i]
             throughput = fields.ray_throughput[i]
             pixel_idx = fields.ray_pixel_index[i]
             depth = fields.ray_depth[i]
 
-            # Get hit info
+            # Load hit info
             hit_point = fields.hit_point[i]
             normal = fields.hit_normal[i]
             prim_type = fields.hit_prim_type[i]
             prim_idx = fields.hit_prim_idx[i]
             t = fields.hit_t[i]
 
-            # Check if this primitive is a constant medium
+            # Check constant medium
             is_constant_medium = 0
-            if prim_type == 0:  # PRIM_SPHERE
+            if prim_type == 0:
                 is_constant_medium = fields.is_constant_medium_sphere[prim_idx]
-            elif prim_type == 1:  # PRIM_TRIANGLE
+            elif prim_type == 1:
                 is_constant_medium = fields.is_constant_medium_triangle[prim_idx]
-            elif prim_type == 2:  # PRIM_QUAD
+            elif prim_type == 2:
                 is_constant_medium = fields.is_constant_medium_quad[prim_idx]
 
             scattered = False
             scatter_dir = ti.math.vec3(0.0)
             attenuation = ti.math.vec3(1.0)
-            volume_passthrough = False
             emit = ti.math.vec3(0.0)
 
-            # Handle constant medium (volume) if applicable
+            # Handle volumes
             if is_constant_medium > 0:
                 is_medium_hit, t_medium, medium_point, medium_normal, use_isotropic, t_exit = apply_constant_medium(
                     prim_type, prim_idx, current_origin, current_dir, 0.001, 1e10, t
                 )
 
                 if is_medium_hit:
-                    # Ray scatters inside the volume
                     hit_point = medium_point
-                    normal = medium_normal
-
-                    # Isotropic scattering
                     scatter_dir = random_unit_vector()
-                    albedo = ti.math.vec3(0.0)
-                    if prim_type == 0:  # PRIM_SPHERE
-                        albedo = fields.medium_albedo_sphere[prim_idx]
-                    elif prim_type == 1:  # PRIM_TRIANGLE
-                        albedo = fields.medium_albedo_triangle[prim_idx]
-                    elif prim_type == 2:  # PRIM_QUAD
-                        albedo = fields.medium_albedo_quad[prim_idx]
-                    attenuation = albedo
+                    if prim_type == 0:
+                        attenuation = fields.medium_albedo_sphere[prim_idx]
+                    elif prim_type == 1:
+                        attenuation = fields.medium_albedo_triangle[prim_idx]
+                    else:  # prim_type == 2
+                        attenuation = fields.medium_albedo_quad[prim_idx]
                     scattered = True
 
                 elif t_exit > 0.0:
-                    # Ray passed through volume without scattering
-                    volume_passthrough = True
-                    ray_length = ti.sqrt(current_dir.dot(current_dir))
-                    epsilon_t = 0.001 / ray_length
-
-                    # Generate continuation ray
-                    new_origin = current_origin + current_dir * (t_exit + epsilon_t)
-                    new_dir = current_dir
-                    new_throughput = throughput  # No attenuation
-
-                    # Add to next wave
+                    # Volume passthrough - add to next wave immediately
+                    epsilon_t = 0.001 / ti.sqrt(current_dir.dot(current_dir))
                     next_idx = ti.atomic_add(fields.next_ray_count[None], 1)
-                    fields.next_ray_origins[next_idx] = new_origin
-                    fields.next_ray_directions[next_idx] = new_dir
-                    fields.next_ray_throughput[next_idx] = new_throughput
+                    fields.next_ray_origins[next_idx] = current_origin + current_dir * (t_exit + epsilon_t)
+                    fields.next_ray_directions[next_idx] = current_dir
+                    fields.next_ray_throughput[next_idx] = throughput
                     fields.next_ray_pixel_index[next_idx] = pixel_idx
-                    fields.next_ray_depth[next_idx] = depth  # Same depth, just passthrough
+                    fields.next_ray_depth[next_idx] = depth
 
                 else:
-                    # Fallback: treat as solid surface
+                    # Fallback
                     emit = emitted(prim_type, prim_idx, 0.0, 0.0, hit_point)
                     scattered, scatter_dir, attenuation = scatter(
                         current_dir, hit_point, normal, prim_type, prim_idx
                     )
             else:
-                # Normal surface - handle emission and scattering
+                # Normal surface
                 emit = emitted(prim_type, prim_idx, 0.0, 0.0, hit_point)
                 scattered, scatter_dir, attenuation = scatter(
                     current_dir, hit_point, normal, prim_type, prim_idx
                 )
 
-            # Add emission contribution
-            if emit.norm_sqr() > 0.0:
-                img_height, img_width = fields.accum_buffer.shape
+            # Add emission (direct write - one ray per pixel first bounce, atomics after)
+            # For first bounce (depth 0), direct write is safe
+            # For subsequent bounces, need atomics (multiple rays can hit same pixel)
+            if emit.x > 0.0 or emit.y > 0.0 or emit.z > 0.0:
                 py = pixel_idx // img_width
                 px = pixel_idx % img_width
-                ti.atomic_add(fields.accum_buffer[py, px], throughput * emit)
+                contribution = throughput * emit
+                if depth == 0:
+                    fields.accum_buffer[py, px] += contribution
+                else:
+                    ti.atomic_add(fields.accum_buffer[py, px], contribution)
 
-            # Generate scattered ray if material scattered
-            if scattered and not volume_passthrough:
+            # Generate scattered ray
+            if scattered:
                 new_throughput = throughput * attenuation
                 new_depth = depth + 1
 
-                # Check if we've hit max depth
-                if new_depth >= fields.max_depth[None]:
-                    # Don't generate new ray, path terminates
-                    pass
-                else:
-                    # Russian Roulette after minimum depth
+                # Early termination checks
+                if new_depth < fields.max_depth[None]:
+                    # Russian Roulette
                     should_continue = True
-                    RR_MIN_DEPTH = 5
-                    RR_MAX_PROB = 0.95
-
-                    if new_depth >= RR_MIN_DEPTH:
-                        survival_prob = ti.min(ti.max(ti.max(new_throughput.x, new_throughput.y), new_throughput.z), RR_MAX_PROB)
-
+                    if new_depth >= 5:  # RR_MIN_DEPTH
+                        survival_prob = ti.min(ti.max(ti.max(new_throughput.x, new_throughput.y), new_throughput.z), 0.95)
                         if ti.random() > survival_prob:
-                            # Path terminated by Russian Roulette
                             should_continue = False
                         else:
-                            # Boost throughput to maintain unbiased result
                             new_throughput = new_throughput / survival_prob
 
                     if should_continue:
-                        # Add to next wave
                         next_idx = ti.atomic_add(fields.next_ray_count[None], 1)
                         fields.next_ray_origins[next_idx] = hit_point
                         fields.next_ray_directions[next_idx] = scatter_dir
