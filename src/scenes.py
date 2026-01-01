@@ -736,26 +736,29 @@ def triangles():
 #------------------------------------------------------------------------
 
 def test_mesh():
-    """Load and render the silo mesh."""
+    """Load and render a mesh using the GPU renderer."""
 
-    print("Loading silo model...")
+    print("Loading mesh model...")
     start_time = time.time()
 
-    # Create material for the silo
-    wood_material = lambertian.from_color(color(0.6, 0.4, 0.2))
+    # Create material for the mesh
+    mesh_material = lambertian.from_color(color(0.6, 0.4, 0.2))
 
     # Load the mesh from the models folder
     # The mesh class will automatically find the .obj file inside
-    silo = mesh(
-        model_path="assets/models/house",
-        mat=wood_material,
+    # IMPORTANT: You need to have an OBJ file in assets/models/
+    # Example: assets/models/house/house.obj or assets/models/teapot.obj
+    model_mesh = mesh(
+        model_path="assets/models",  # Directory containing .obj files
+        obj_filename="teapot.obj",   # Specific .obj file to load
+        mat=mesh_material,
         scale=0.1,  # Scale down to 10% of original size
         offset=point3(0, 0, 0)
     )
 
     load_time = time.time() - start_time
-    print(f"✓ Loaded {silo.triangle_count()} triangles in {load_time:.2f}s")
-    print(f"  Bounding box: {silo.bounding_box()}")
+    print(f"✓ Loaded {model_mesh.triangle_count()} triangles in {load_time:.2f}s")
+    print(f"  Bounding box: {model_mesh.bounding_box()}")
 
     # Build scene
     world = hittable_list()
@@ -765,29 +768,150 @@ def test_mesh():
     from core import Sphere
     world.add(Sphere.stationary(point3(0, -1000, 0), 1000, ground_material))
 
-    # Add the silo (it already has internal BVH built automatically)
-    world.add(silo)
+    # Add the mesh (triangles will be automatically extracted by GPU compiler)
+    world.add(model_mesh)
+
+    # Optional: Add a light source for better visibility
+    light = diffuse_light.from_color(color(4, 4, 4))
+    world.add(Sphere.stationary(point3(10, 10, -10), 2, light))
+
+    # Create BVH for the entire scene
+    bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
+    world = hittable_list()
+    world.add(bvh)
 
     # Setup camera
     cam = camera()
     cam.aspect_ratio = 16.0 / 9.0
-    cam.img_width = 50
-    cam.samples_per_pixel = 10
-    cam.max_depth = 3
+    cam.img_width = 800
+    cam.samples_per_pixel = 100
+    cam.max_depth = 10
 
     # Camera position - adjusted for scaled model
-    # Position camera to look at the model from a good angle
-    cam.vfov = 20  # Wider field of view
-    cam.lookfrom = point3(15, 5, 10)  # Further back and higher
-    cam.lookat = point3(0, 1.5, 0)  # Look at center of model
+    cam.vfov = 40
+    cam.lookfrom = point3(15, 5, 10)
+    cam.lookat = point3(0, 1.5, 0)
     cam.vup = vec3(0, 1, 0)
-    cam.defocus_angle = 0  # No depth of field
-    cam.background = color(0.70, 0.80, 1.00)
+    cam.defocus_angle = 0
 
-    # Render
-    print("\nRendering scene...")
-    cam.render(world, "../temp/test_mesh.ppm")
-    print("✓ Done! Check ../temp/test_mesh.ppm")
+    # Use GPU renderer for MAXIMUM speed!
+    print("\nRendering with GPU...")
+    renderer = RendererFactory.create(
+        'taichi',  # GPU renderer
+        world,
+        cam,
+        "../temp/test_mesh.ppm"
+    )
+    renderer.background_color = color(0, 0, 0)  # Black background
+    renderer.max_depth = 10
+    renderer.render()
+
+    print(f"✓ Done! Rendered {model_mesh.triangle_count()} triangles on GPU")
+    print("  Output: ../temp/test_mesh.ppm")
+
+
+def test_mesh_interactive():
+    """
+    Load and render a mesh using the GPU renderer with interactive camera controls.
+
+    Controls:
+        - Left-click and drag: Rotate camera around the mesh
+        - Close window: Exit and save final image
+    """
+    print("="*80)
+    print("INTERACTIVE MESH VIEWER")
+    print("="*80)
+    print("Loading mesh model...")
+    start_time = time.time()
+
+    # Create material for the mesh
+    mesh_material = lambertian.from_color(color(0.6, 0.4, 0.2))
+    teapot_material = dielectric(1.5)
+
+    # Load the mesh from the models folder
+    # IMPORTANT: You need to have an OBJ file in assets/models/
+    # Example: assets/models/house/house.obj or assets/models/teapot.obj
+    model_mesh = mesh(
+        model_path="assets/models",  # Directory containing .obj files
+        obj_filename="teapot.obj",   # Specific .obj file to load
+        mat=teapot_material,
+        scale=0.03,  # Scale down to 10% of original size
+        offset=point3(0, 1.3, 0)
+    )
+
+    load_time = time.time() - start_time
+    print(f"✓ Loaded {model_mesh.triangle_count()} triangles in {load_time:.2f}s")
+    print(f"  Bounding box: {model_mesh.bounding_box()}")
+
+    # Build scene
+    world = hittable_list()
+
+    # Add ground plane with checker texture
+    checker = checker_texture.from_colors(0.5, color(0.2, 0.3, 0.1), color(0.9, 0.9, 0.9))
+    ground_material = lambertian.from_texture(checker)
+    from core import Sphere
+    world.add(Sphere.stationary(point3(0, -1000, 0), 1000, ground_material))
+
+    # Add the mesh (triangles will be automatically extracted by GPU compiler)
+    world.add(model_mesh)
+
+    # Add quad diffuse light to the northwest, 5 units from teapot
+    light_material = diffuse_light.from_color(color(7, 7, 7))
+    world.add(quad(
+        point3(-4, 4, -3),      # Corner position (northwest, 5 units away)
+        vec3(2, 0, 0),          # Width (2 units wide)
+        vec3(0, 0, 2),          # Height (2 units tall)
+        light_material
+    ))
+
+    # Optional: Add some reference spheres to show scale
+    ref_material = lambertian.from_color(color(0.3, 0.3, 0.8))
+    world.add(Sphere.stationary(point3(-3, 0.5, 0), 0.5, ref_material))
+    world.add(Sphere.stationary(point3(3, 0.5, 0), 0.5, ref_material))
+
+    # Create BVH for the entire scene
+    bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
+    world = hittable_list()
+    world.add(bvh)
+
+    # Setup camera
+    cam = camera()
+    cam.aspect_ratio = 16.0 / 9.0
+    cam.img_width = 1280  # Higher resolution for interactive viewing
+    cam.samples_per_pixel = 1000  # High quality progressive rendering
+
+    # Camera position - adjusted for scaled model
+    cam.vfov = 40
+    cam.lookfrom = point3(6, 3, 6)  # Position camera to view mesh
+    cam.lookat = point3(0, 1.5, 0)    # Look at center of mesh
+    cam.vup = vec3(0, 1, 0)
+    cam.defocus_angle = 0
+
+    # Use Interactive GPU viewer with mouse controls
+    viewer = InteractiveViewer(
+        world,
+        cam,
+        "../temp/test_mesh_interactive.ppm"
+    )
+    viewer.background_color = color(0.1, 0.05, 0.05)  # Dark gray background
+    # viewer.background_color = color(0.70, 0.80, 1.00)  # Light blue background
+    viewer.max_depth = 50
+
+    print("\n" + "="*80)
+    print("Interactive Controls:")
+    print("  • Left-click + drag: Rotate camera around the mesh")
+    print("  • Horizontal drag: Rotate left/right (yaw)")
+    print("  • Vertical drag: Rotate up/down (pitch)")
+    print("  • Close window: Save final image and exit")
+    print("="*80)
+    print(f"\nRendering {model_mesh.triangle_count()} triangles on GPU...")
+    print("Progressive refinement will continue until window is closed.\n")
+
+    # Start interactive rendering
+    viewer.render_interactive()
+
+    print(f"\n✓ Done! Final image saved to: ../temp/test_mesh_interactive.ppm")
+    print(f"  Rendered {model_mesh.triangle_count()} triangles with GPU acceleration")
 
 #------------------------------------------------------------------------
 
@@ -1210,8 +1334,8 @@ def vol2_final_scene_comparison():
     # Camera setup - reduced resolution and samples for faster comparison
     cam = camera()
     cam.aspect_ratio = 1.0
-    cam.img_width = 200  # Reduced from 1000 for faster testing
-    cam.samples_per_pixel = 100  # Reduced from 10000 for faster testing
+    cam.img_width = 1000  # Reduced from 1000 for faster testing
+    cam.samples_per_pixel = 10000  # Reduced from 10000 for faster testing
 
     cam.vfov = 40
     cam.lookfrom = point3(478, 278, -600)
@@ -1222,19 +1346,19 @@ def vol2_final_scene_comparison():
 #------------------------------------------------------------------------
 
     # CPU Render:
-    cam.max_depth = 15
-    cam.background = color(0, 0, 0)
-    cam.russian_roulette_enabled = False
-    print("\nRendering scene...")
-    cam.render(world, "../temp/vol2_final_interactive_cpu.ppm")
-    print("✓ Done! Check ../temp/vol2_final_interactive_cpu.ppm")
+    # cam.max_depth = 15
+    # cam.background = color(0, 0, 0)
+    # cam.russian_roulette_enabled = False
+    # print("\nRendering scene...")
+    # cam.render(world, "../temp/vol2_final_interactive_cpu.ppm")
+    # print("✓ Done! Check ../temp/vol2_final_interactive_cpu.ppm")
 
 #------------------------------------------------------------------------
 
     # Test 1: Megakernel (traditional depth-first)
-    # print("\n" + "="*80)
-    # print("TEST 1: MEGAKERNEL MODE on vol2_final_scene (1000+ objects)")
-    # print("="*80)
+    print("\n" + "="*80)
+    print("TEST 1: MEGAKERNEL MODE on vol2_final_scene (1000+ objects)")
+    print("="*80)
 
     # renderer = RendererFactory.create(
     #     'taichi',
@@ -1249,21 +1373,21 @@ def vol2_final_scene_comparison():
     # renderer.render(enable_preview=True)  # <-- MEGAKERNEL: calls render() method
     # time_mega = time.time() - start_mega
 
-    # # Interactive rendering with mouse controls
-    # viewer = InteractiveViewer(
-    #     world,
-    #     cam,
-    #     "../temp/vol2_final_interactive.png"
-    # )
-    # viewer.background_color = color(0, 0, 0)
-    # viewer.max_depth = 50
+    # Interactive rendering with mouse controls
+    viewer = InteractiveViewer(
+        world,
+        cam,
+        "../temp/vol2_final_interactive.png"
+    )
+    viewer.background_color = color(0, 0, 0)
+    viewer.max_depth = 50
 
     # print("\nInteractive Controls:")
     # print("  - Left-click and drag to rotate camera")
     # print("  - Close window to exit and save final image")
     # print()
 
-    # viewer.render_interactive()
+    viewer.render_interactive()
 
 #------------------------------------------------------------------------
 

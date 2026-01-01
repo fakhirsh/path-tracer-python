@@ -104,12 +104,13 @@ def extract_quads(world) -> List:
 def extract_triangles(world) -> List:
     """
     Recursively extract all triangle objects from world hierarchy.
-    Handles: triangle, hittable_list, bvh_node
+    Handles: triangle, mesh (extracts internal triangles), hittable_list, bvh_node
     Returns: List of unique triangle objects (deduplicated by object identity)
     """
     from core.triangle import triangle
     from core.hittable_list import hittable_list
     from core.bvh_node import bvh_node
+    from core.mesh import mesh
 
     seen = set()
     triangles = []
@@ -119,6 +120,12 @@ def extract_triangles(world) -> List:
         from core.constant_medium import constant_medium
         if isinstance(obj, constant_medium):
             _extract(obj.boundary)
+        # Check if this is a mesh - extract all its internal triangles
+        elif isinstance(obj, mesh):
+            for tri in obj.triangles:
+                if id(tri) not in seen:
+                    seen.add(id(tri))
+                    triangles.append(tri)
         # Check if this is a triangle
         elif isinstance(obj, triangle):
             if id(obj) not in seen:

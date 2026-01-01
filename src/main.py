@@ -13,6 +13,7 @@ def main():
     # vol2_final_scene()  # Original final scene (interactive)
     # wavefront_comparison()  # Compare on simple scene (41 spheres)
     vol2_final_scene_comparison()  # Compare on complex scene (1000+ objects)
+    # test_mesh_interactive()
 
 #------------------------------------------------------------------------
 

@@ -101,6 +101,8 @@ class mesh(hittable):
         # parse=True loads everything, collect_faces=True gives us face data
         self.scene = pywavefront.Wavefront(obj_file, collect_faces=True, parse=True, strict=False)
 
+        degenerate_count = 0
+
         # Process all materials in the scene
         for _, material_obj in self.scene.materials.items():
             # Get vertices - format depends on what's in the OBJ
@@ -135,6 +137,11 @@ class mesh(hittable):
                             v1 = self._extract_vertex(vertices, idx1)
                             v2 = self._extract_vertex(vertices, idx2)
 
+                            # Check if triangle is degenerate (zero area)
+                            if self._is_degenerate_triangle(v0, v1, v2):
+                                degenerate_count += 1
+                                continue
+
                             tri = triangle(v0, v1, v2, self.mat)
                             self.triangles.append(tri)
             else:
@@ -151,11 +158,19 @@ class mesh(hittable):
                     v1 = self._extract_vertex(vertices, idx1)
                     v2 = self._extract_vertex(vertices, idx2)
 
+                    # Check if triangle is degenerate (zero area)
+                    if self._is_degenerate_triangle(v0, v1, v2):
+                        degenerate_count += 1
+                        continue
+
                     tri = triangle(v0, v1, v2, self.mat)
                     self.triangles.append(tri)
 
+        if degenerate_count > 0:
+            print(f"  ⚠ Skipped {degenerate_count} degenerate triangles (zero area)")
+
         if not self.triangles:
-            raise ValueError(f"No triangles created from OBJ file")
+            raise ValueError(f"No valid triangles created from OBJ file")
 
     def _calculate_stride(self, vertex_format: str) -> int:
         """
@@ -206,6 +221,30 @@ class mesh(hittable):
 
         # Apply scale and offset
         return point3(x * self.scale, y * self.scale, z * self.scale) + self.offset
+
+    def _is_degenerate_triangle(self, v0: point3, v1: point3, v2: point3) -> bool:
+        """
+        Check if a triangle is degenerate (has zero area).
+
+        Args:
+            v0, v1, v2: Triangle vertices
+
+        Returns:
+            True if triangle is degenerate, False otherwise
+        """
+        from util import vec3
+
+        # Compute edges
+        edge1 = v1 - v0
+        edge2 = v2 - v0
+
+        # Compute cross product (normal)
+        cross = vec3.cross(edge1, edge2)
+
+        # Triangle is degenerate if cross product is near zero
+        # (vertices are collinear or coincident)
+        epsilon = 1e-10
+        return cross.length_squared() < epsilon
 
     def set_bounding_box(self):
         """Compute bounding box from all triangles."""
