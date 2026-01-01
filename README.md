@@ -1,26 +1,44 @@
 # Raytracing Series
-The Raytracing Series (Python version)
+The Raytracing Series **(Python GPU version)**
+
+![Final Scene Render](docs/vol2_final_scene.jpg)
+
+## Features
+
+- GPU-accelerated rendering using [Taichi](https://www.taichi-lang.org/)
+- Interactive viewer with mouse-controlled camera rotation
+- Advanced materials: Lambertian, Metal, Dielectric, Emissive, Subsurface Scattering
+- Volumetric rendering (fog/smoke)
+- BVH acceleration with SAH optimization
+- Perlin noise textures
+- OBJ mesh loading
+- Motion blur and depth of field
+- Both megakernel and wavefront rendering architectures
+
+For a comprehensive list of features, see [docs/optimizations.md](docs/optimizations.md).
 
 ## Running the Code
 
-### Basic Usage
-To generate a PPM image:
+### Interactive Mode
+Run the path tracer with live preview:
 
 ```bash
-python3 src/main.py > image.ppm
+python3 src/main.py
 ```
 
-### Live Preview
-To watch a PPM file and see updates in real-time:
+This will:
+- Launch an interactive window with progressive rendering
+- Allow camera rotation with left-click and drag
+- Save the final image to `temp/` as PNG when closed
 
-```bash
-python3 src/watch_ppm.py
-```
+### Selecting Scenes
+Edit `src/main.py` to choose different scenes:
 
-This defaults to watching `image.ppm`. You can specify a different file and a maximum width:
-
-```bash
-python3 src/watch_ppm.py --input image.ppm --max-width 800 --interval 200
+```python
+def main():
+    vol2_final_scene_comparison()  # Complex scene with 1000+ objects
+    # wavefront_comparison()       # Simple comparison scene
+    # vol2_final_scene()           # Original final scene
 ```
 
 ## Performance Profiling
@@ -32,23 +50,22 @@ The code includes built-in cProfile instrumentation to analyze performance bottl
 When you run the main script, profiling data is automatically collected:
 
 ```bash
-python3 src/main.py > image.ppm
+python3 src/main.py
 ```
 
 This will:
-- Generate the rendered image (`image.ppm`)
-- Save profiling data to `profile_output.prof`
-- Print top 30 functions by cumulative time and total time to console
+- Render the scene with interactive preview
+- Save profiling data to `temp/profile_output.prof`
 
 ### Visualizing Profile Data
 
-#### Option 1: SnakeViz (Recommended - Interactive Browser Visualization)
+#### SnakeViz (Interactive Browser Visualization)
 
 Install and visualize with interactive sunburst/icicle charts:
 
 ```bash
 pip install snakeviz
-snakeviz profile_output.prof
+snakeviz temp/profile_output.prof
 ```
 
 Features:
@@ -64,8 +81,9 @@ Key metrics to focus on:
 - **cumtime**: Total time spent in the function and all functions it calls
 - **ncalls**: Number of times the function was called
 
-Common bottlenecks in raytracers:
-- Ray-sphere intersection tests
-- Material scatter calculations
-- Random number generation
-- Vector math operations (dot product, normalization, etc.)
+Common bottlenecks in GPU-accelerated raytracers:
+- BVH construction and flattening
+- Scene compilation to GPU format
+- Kernel compilation (first run only)
+- Data transfer between CPU and GPU
+- Interactive viewer updates

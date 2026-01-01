@@ -1210,8 +1210,8 @@ def vol2_final_scene_comparison():
     # Camera setup - reduced resolution and samples for faster comparison
     cam = camera()
     cam.aspect_ratio = 1.0
-    cam.img_width = 1000  # Reduced from 1000 for faster testing
-    cam.samples_per_pixel = 1000  # Reduced from 10000 for faster testing
+    cam.img_width = 200  # Reduced from 1000 for faster testing
+    cam.samples_per_pixel = 100  # Reduced from 10000 for faster testing
 
     cam.vfov = 40
     cam.lookfrom = point3(478, 278, -600)
@@ -1219,10 +1219,22 @@ def vol2_final_scene_comparison():
     cam.vup = vec3(0, 1, 0)
     cam.defocus_angle = 0
 
+#------------------------------------------------------------------------
+
+    # CPU Render:
+    cam.max_depth = 15
+    cam.background = color(0, 0, 0)
+    cam.russian_roulette_enabled = False
+    print("\nRendering scene...")
+    cam.render(world, "../temp/vol2_final_interactive_cpu.ppm")
+    print("✓ Done! Check ../temp/vol2_final_interactive_cpu.ppm")
+
+#------------------------------------------------------------------------
+
     # Test 1: Megakernel (traditional depth-first)
-    print("\n" + "="*80)
-    print("TEST 1: MEGAKERNEL MODE on vol2_final_scene (1000+ objects)")
-    print("="*80)
+    # print("\n" + "="*80)
+    # print("TEST 1: MEGAKERNEL MODE on vol2_final_scene (1000+ objects)")
+    # print("="*80)
 
     # renderer = RendererFactory.create(
     #     'taichi',
@@ -1237,21 +1249,23 @@ def vol2_final_scene_comparison():
     # renderer.render(enable_preview=True)  # <-- MEGAKERNEL: calls render() method
     # time_mega = time.time() - start_mega
 
-    # Interactive rendering with mouse controls
-    viewer = InteractiveViewer(
-        world,
-        cam,
-        "../temp/vol2_final_interactive.png"
-    )
-    viewer.background_color = color(0, 0, 0)
-    viewer.max_depth = 50
+    # # Interactive rendering with mouse controls
+    # viewer = InteractiveViewer(
+    #     world,
+    #     cam,
+    #     "../temp/vol2_final_interactive.png"
+    # )
+    # viewer.background_color = color(0, 0, 0)
+    # viewer.max_depth = 50
 
-    print("\nInteractive Controls:")
-    print("  - Left-click and drag to rotate camera")
-    print("  - Close window to exit and save final image")
-    print()
+    # print("\nInteractive Controls:")
+    # print("  - Left-click and drag to rotate camera")
+    # print("  - Close window to exit and save final image")
+    # print()
 
-    viewer.render_interactive()
+    # viewer.render_interactive()
+
+#------------------------------------------------------------------------
 
     # # Test 2: Wavefront (breadth-first)
     # # NOTE: Same TaichiRenderer class, just calling a different method!
