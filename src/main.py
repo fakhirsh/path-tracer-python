@@ -9,7 +9,9 @@ import pstats
 #------------------------------------------------------------------------
 
 def main():
-    vol2_final_scene()
+    # Change this to test different scenes
+    # vol2_final_scene()  # Original final scene
+    wavefront_comparison()  # Compare megakernel vs wavefront
 
 #------------------------------------------------------------------------
 

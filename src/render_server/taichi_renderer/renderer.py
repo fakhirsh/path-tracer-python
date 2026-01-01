@@ -71,6 +71,9 @@ class TaichiRenderer:
         # Allocate dynamic fields
         fields.allocate_dynamic_fields(self.cam.img_width, self.cam.img_height)
 
+        # Allocate wavefront fields (for wavefront path tracing mode)
+        fields.allocate_wavefront_fields(self.cam.img_width, self.cam.img_height, self.max_depth)
+
         # Initialize Perlin noise (only needs to be done once)
         from core.perlin import perlin
         perlin_instance = perlin()
@@ -243,9 +246,119 @@ class TaichiRenderer:
         # Rendering parameters
         fields.max_depth[None] = self.max_depth
 
+    def render_wavefront(self, enable_preview: bool = True):
+        """
+        Wavefront path tracing render loop.
+        Uses breadth-first ray processing instead of depth-first (megakernel).
+
+        This processes all rays at the same bounce depth together in waves,
+        reducing thread divergence and improving GPU occupancy.
+
+        Args:
+            enable_preview: Show live preview window during rendering
+        """
+        # Re-upload camera and render settings
+        self._upload_camera()
+
+        self._print_setup_info()
+        print("Render Mode: WAVEFRONT (breadth-first)")
+
+        # Kernel warmup (JIT compile)
+        print("\nWarming up GPU kernels...")
+        t0 = time.time()
+        # Warm up all wavefront kernels
+        kernels.generate_camera_rays(self.cam.img_width, self.cam.img_height)
+        ti.sync()
+        kernels.intersect_rays()
+        ti.sync()
+        kernels.shade_miss_rays()
+        ti.sync()
+        kernels.shade_and_scatter()
+        ti.sync()
+        kernels.swap_ray_buffers()
+        ti.sync()
+        kernels.clear_accum_buffer()
+        ti.sync()
+        fields.reset_depth_stats()
+        fields.reset_rr_stats()
+        self.timing['kernel_warmup'] = time.time() - t0
+        print(f"  Kernel Warmup: {self.timing['kernel_warmup']*1000:6.2f}ms (JIT compilation complete)")
+
+        # Setup preview
+        preview = None
+        if enable_preview:
+            preview = LivePreview(self.cam.img_width, self.cam.img_height)
+            preview.start(update_interval_ms=50)
+
+        # Render loop
+        print(f"\nRendering Progress:")
+        print(f"{'─' * 60}")
+
+        render_start = time.time()
+
+        # Calculate display interval (every 5%)
+        display_interval = max(1, self.cam.samples_per_pixel // 20)  # 20 updates = every 5%
+        total_pixels = self.cam.img_width * self.cam.img_height
+
+        for sample in range(self.cam.samples_per_pixel):
+            sample_start = time.time()
+
+            # Wavefront rendering: process one sample per pixel in waves
+            # 1. Generate camera rays for all pixels
+            kernels.generate_camera_rays(self.cam.img_width, self.cam.img_height)
+
+            # 2. Wave loop: process rays bounce by bounce
+            for bounce in range(self.max_depth):
+                # Check if any rays are still active
+                active_count = fields.active_ray_count[None]
+                if active_count == 0:
+                    break
+
+                # Intersect all active rays
+                kernels.intersect_rays()
+
+                # Shade misses (add background)
+                kernels.shade_miss_rays()
+
+                # Shade hits and generate scattered rays
+                kernels.shade_and_scatter()
+
+                # Swap buffers for next iteration
+                kernels.swap_ray_buffers()
+
+            ti.sync()
+
+            sample_time = time.time() - sample_start
+            self.sample_times.append(sample_time)
+
+            # Progress display (every 5%)
+            should_display = (sample + 1) % display_interval == 0 or sample == 0 or sample == self.cam.samples_per_pixel - 1
+            if should_display:
+                self._print_progress(sample, render_start, total_pixels)
+
+            # Update preview
+            if preview:
+                accum_np = fields.accum_buffer.to_numpy()
+                preview.update(accum_np, sample + 1, self.cam.samples_per_pixel)
+                preview.process_events()
+
+        print(f"{'─' * 60}")
+
+        # Write output
+        self._write_image()
+        self._print_stats()
+
+        # Keep preview open
+        if preview:
+            print("\n✓ Preview window will stay open. Close it manually when done.")
+            preview.finish()
+
     def render(self, enable_preview: bool = True):
         """
-        Main render loop.
+        Main render loop (megakernel mode).
+        Uses depth-first ray processing where each thread traces a complete ray path.
+
+        For wavefront (breadth-first) mode, use render_wavefront() instead.
 
         Args:
             enable_preview: Show live preview window during rendering
@@ -255,6 +368,7 @@ class TaichiRenderer:
         self._upload_camera()
 
         self._print_setup_info()
+        print("Render Mode: MEGAKERNEL (depth-first)")
 
         # Kernel warmup (JIT compile)
         print("\nWarming up GPU kernels...")

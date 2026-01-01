@@ -1126,3 +1126,121 @@ def vol2_final_scene():
 def vol2_final_scene_simple():
     """Simplified version of the final scene for faster testing"""
     pass
+
+#------------------------------------------------------------------------
+
+def wavefront_comparison():
+    """
+    Compare megakernel vs wavefront path tracing performance.
+    Tests both rendering modes on the same scene.
+    """
+    # Create a moderately complex scene for comparison
+    world = hittable_list()
+
+    # Ground
+    ground = lambertian.from_color(color(0.5, 0.5, 0.5))
+    world.add(Sphere.stationary(point3(0, -1000, 0), 1000, ground))
+
+    # Random spheres
+    for a in range(-3, 3):
+        for b in range(-3, 3):
+            choose_mat = random.random()
+            center = point3(a + 0.9 * random.random(), 0.2, b + 0.9 * random.random())
+
+            if (center - point3(4, 0.2, 0)).length() > 0.9:
+                if choose_mat < 0.6:
+                    # Diffuse
+                    albedo = color.random() * color.random()
+                    sphere_material = lambertian.from_color(albedo)
+                    world.add(Sphere.stationary(center, 0.2, sphere_material))
+                elif choose_mat < 0.85:
+                    # Metal
+                    albedo = color.random(0.5, 1)
+                    fuzz = random.uniform(0, 0.5)
+                    sphere_material = metal(albedo, fuzz)
+                    world.add(Sphere.stationary(center, 0.2, sphere_material))
+                else:
+                    # Glass
+                    sphere_material = dielectric(1.5)
+                    world.add(Sphere.stationary(center, 0.2, sphere_material))
+
+    # Three large spheres
+    material1 = dielectric(1.5)
+    world.add(Sphere.stationary(point3(0, 1, 0), 1.0, material1))
+
+    material2 = lambertian.from_color(color(0.4, 0.2, 0.1))
+    world.add(Sphere.stationary(point3(-4, 1, 0), 1.0, material2))
+
+    material3 = metal(color(0.7, 0.6, 0.5), 0.0)
+    world.add(Sphere.stationary(point3(4, 1, 0), 1.0, material3))
+
+    # Add light source
+    light = diffuse_light.from_color(color(4, 4, 4))
+    world.add(Sphere.stationary(point3(0, 5, 0), 1.5, light))
+
+    # Build BVH
+    bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
+    world = hittable_list()
+    world.add(bvh)
+
+    # Camera setup
+    cam = camera()
+    cam.aspect_ratio = 16.0 / 9.0
+    cam.img_width = 800
+    cam.samples_per_pixel = 200  # Low sample count for quick comparison
+
+    cam.vfov = 20
+    cam.lookfrom = point3(13, 2, 3)
+    cam.lookat = point3(0, 0, 0)
+    cam.vup = vec3(0, 1, 0)
+    cam.defocus_angle = 0.0
+
+    # Test 1: Megakernel (traditional depth-first)
+    print("\n" + "="*80)
+    print("TEST 1: MEGAKERNEL MODE (depth-first ray tracing)")
+    print("="*80)
+
+    renderer = RendererFactory.create(
+        'taichi',
+        world,
+        cam,
+        "../temp/comparison_megakernel.png"
+    )
+    renderer.background_color = color(0.70, 0.80, 1.00)
+    renderer.max_depth = 50
+
+    start_mega = time.time()
+    renderer.render(enable_preview=False)  # <-- MEGAKERNEL: calls render() method
+    time_mega = time.time() - start_mega
+
+    # Test 2: Wavefront (breadth-first)
+    # NOTE: Same TaichiRenderer class, just calling a different method!
+    print("\n" + "="*80)
+    print("TEST 2: WAVEFRONT MODE (breadth-first ray tracing)")
+    print("="*80)
+
+    # Re-create renderer to get fresh state (clear accumulation buffer)
+    renderer = RendererFactory.create(
+        'taichi',
+        world,
+        cam,
+        "../temp/comparison_wavefront.png"
+    )
+    renderer.background_color = color(0.70, 0.80, 1.00)
+    renderer.max_depth = 50
+
+    start_wave = time.time()
+    renderer.render_wavefront(enable_preview=False)  # <-- WAVEFRONT: calls render_wavefront() method
+    time_wave = time.time() - start_wave
+
+    # Print comparison
+    print("\n" + "="*80)
+    print("PERFORMANCE COMPARISON")
+    print("="*80)
+    print(f"Megakernel Time:  {time_mega:.2f}s")
+    print(f"Wavefront Time:   {time_wave:.2f}s")
+    print(f"Speedup:          {time_mega/time_wave:.2f}x" if time_wave < time_mega else f"Slowdown:         {time_wave/time_mega:.2f}x")
+    print(f"\nImages saved to:")
+    print(f"  - ../temp/comparison_megakernel.png")
+    print(f"  - ../temp/comparison_wavefront.png")
+    print("="*80)

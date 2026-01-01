@@ -189,6 +189,39 @@ accum_buffer = None
 
 
 # =============================================================================
+# WAVEFRONT PATH TRACING DATA
+# =============================================================================
+
+# Wavefront ray queues - allocated dynamically based on image size
+# These store all active rays being processed in the current wave
+
+ray_origins = None          # ti.Vector.field(3, ti.f32) - ray origin positions
+ray_directions = None       # ti.Vector.field(3, ti.f32) - ray directions
+ray_throughput = None       # ti.Vector.field(3, ti.f32) - accumulated throughput (color attenuation)
+ray_pixel_index = None      # ti.field(ti.i32) - which pixel this ray belongs to
+ray_depth = None            # ti.field(ti.i32) - current bounce depth
+
+# Next wave buffers (double buffering to avoid copying)
+next_ray_origins = None
+next_ray_directions = None
+next_ray_throughput = None
+next_ray_pixel_index = None
+next_ray_depth = None
+
+# Hit records - store intersection results for all rays
+hit_valid = None           # ti.field(ti.i32) - 1 if ray hit something, 0 if miss
+hit_t = None              # ti.field(ti.f32) - ray parameter at hit point
+hit_point = None          # ti.Vector.field(3, ti.f32) - world space hit position
+hit_normal = None         # ti.Vector.field(3, ti.f32) - surface normal at hit
+hit_prim_type = None      # ti.field(ti.i32) - primitive type (0=sphere, 1=triangle, 2=quad)
+hit_prim_idx = None       # ti.field(ti.i32) - primitive index
+hit_front_face = None     # ti.field(ti.i32) - 1 if front face, 0 if back face
+
+# Ray queue management
+active_ray_count = ti.field(ti.i32, shape=())   # Number of active rays in current wave
+next_ray_count = ti.field(ti.i32, shape=())     # Number of rays generated for next wave
+
+# =============================================================================
 # DYNAMIC FIELD ALLOCATION
 # =============================================================================
 
@@ -199,6 +232,49 @@ def allocate_dynamic_fields(width: int, height: int):
     """
     global accum_buffer
     accum_buffer = ti.Vector.field(3, ti.f32, shape=(height, width))
+
+
+def allocate_wavefront_fields(width: int, height: int, max_bounces: int = MAX_DEPTH):
+    """
+    Allocate wavefront ray tracing fields.
+    Maximum rays = width * height * max_bounces (conservative estimate).
+    In practice, many rays terminate early, but we allocate for worst case.
+
+    Args:
+        width: Image width in pixels
+        height: Image height in pixels
+        max_bounces: Maximum number of bounces per ray
+    """
+    global ray_origins, ray_directions, ray_throughput, ray_pixel_index, ray_depth
+    global next_ray_origins, next_ray_directions, next_ray_throughput, next_ray_pixel_index, next_ray_depth
+    global hit_valid, hit_t, hit_point, hit_normal, hit_prim_type, hit_prim_idx, hit_front_face
+
+    # Calculate max rays - use a conservative multiplier since most rays terminate before max depth
+    # Using 2x instead of max_bounces to save memory (most paths die early from RR)
+    max_rays = width * height * 2
+
+    # Current wave ray data
+    ray_origins = ti.Vector.field(3, ti.f32, shape=max_rays)
+    ray_directions = ti.Vector.field(3, ti.f32, shape=max_rays)
+    ray_throughput = ti.Vector.field(3, ti.f32, shape=max_rays)
+    ray_pixel_index = ti.field(ti.i32, shape=max_rays)
+    ray_depth = ti.field(ti.i32, shape=max_rays)
+
+    # Next wave ray data (double buffering)
+    next_ray_origins = ti.Vector.field(3, ti.f32, shape=max_rays)
+    next_ray_directions = ti.Vector.field(3, ti.f32, shape=max_rays)
+    next_ray_throughput = ti.Vector.field(3, ti.f32, shape=max_rays)
+    next_ray_pixel_index = ti.field(ti.i32, shape=max_rays)
+    next_ray_depth = ti.field(ti.i32, shape=max_rays)
+
+    # Hit records
+    hit_valid = ti.field(ti.i32, shape=max_rays)
+    hit_t = ti.field(ti.f32, shape=max_rays)
+    hit_point = ti.Vector.field(3, ti.f32, shape=max_rays)
+    hit_normal = ti.Vector.field(3, ti.f32, shape=max_rays)
+    hit_prim_type = ti.field(ti.i32, shape=max_rays)
+    hit_prim_idx = ti.field(ti.i32, shape=max_rays)
+    hit_front_face = ti.field(ti.i32, shape=max_rays)
 
 
 @ti.kernel
