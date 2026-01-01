@@ -210,7 +210,7 @@ class TaichiRenderer:
                 # Store dimensions
                 fields.image_texture_dims[idx] = [width, height]
 
-        # BVH - Upload to PACKED structure (new optimized format)
+        # BVH - Upload to PACKED structure (optimized format)
         bvh_n = bvh['num_bvh_nodes']
         for i in range(bvh_n):
             node = fields.bvh_nodes[i]
@@ -218,18 +218,9 @@ class TaichiRenderer:
             node.bbox_max = bvh['bvh_bbox_max'][i]
             node.left_child = bvh['bvh_left_child'][i]
             node.right_child = bvh['bvh_right_child'][i]
-            node.parent = bvh.get('bvh_parent', [-1] * bvh_n)[i]  # New: parent pointer
+            node.parent = bvh.get('bvh_parent', [-1] * bvh_n)[i]  # Parent pointer for stackless traversal
             node.prim_type = bvh['bvh_prim_type'][i]
             node.prim_idx = bvh['bvh_prim_idx'][i]
-
-        # Legacy fields (for backward compatibility - can be removed later)
-        for i in range(bvh_n):
-            fields.bvh_bbox_min[i] = bvh['bvh_bbox_min'][i]
-            fields.bvh_bbox_max[i] = bvh['bvh_bbox_max'][i]
-            fields.bvh_left_child[i] = bvh['bvh_left_child'][i]
-            fields.bvh_right_child[i] = bvh['bvh_right_child'][i]
-            fields.bvh_prim_type[i] = bvh['bvh_prim_type'][i]
-            fields.bvh_prim_idx[i] = bvh['bvh_prim_idx'][i]
 
         fields.num_bvh_nodes[None] = bvh_n
 

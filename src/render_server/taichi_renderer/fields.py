@@ -62,15 +62,6 @@ class BVHNode:
 bvh_nodes = BVHNode.field(shape=MAX_BVH_NODES)
 num_bvh_nodes = ti.field(ti.i32, shape=())
 
-# Legacy fields (for backward compatibility during transition)
-# TODO: Remove these once fully migrated
-bvh_bbox_min = ti.Vector.field(3, ti.f32, MAX_BVH_NODES)
-bvh_bbox_max = ti.Vector.field(3, ti.f32, MAX_BVH_NODES)
-bvh_left_child = ti.field(ti.i32, MAX_BVH_NODES)
-bvh_right_child = ti.field(ti.i32, MAX_BVH_NODES)
-bvh_prim_type = ti.field(ti.i32, MAX_BVH_NODES)
-bvh_prim_idx = ti.field(ti.i32, MAX_BVH_NODES)
-
 # =============================================================================
 # COLD DATA: Materials (accessed once per ray on closest hit)
 # =============================================================================

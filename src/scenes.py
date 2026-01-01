@@ -1104,8 +1104,8 @@ def vol2_final_scene():
     cam = camera()
 
     cam.aspect_ratio = 1.0
-    cam.img_width = 800
-    cam.samples_per_pixel = 1000
+    cam.img_width = 1000
+    cam.samples_per_pixel = 10000
 
     cam.vfov = 40
     cam.lookfrom = point3(478, 278, -600)
