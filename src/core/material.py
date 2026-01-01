@@ -115,6 +115,33 @@ class diffuse_light(material):
         return False
 #----------------------------------------------------------------------------------------
 
+class isotropic(material):
+    def __init__(self):
+        pass
+
+    @classmethod
+    def from_texture(cls, tex: texture) -> "isotropic":
+        instance = cls()
+        instance.tex = tex
+        return instance
+    
+    @classmethod
+    def from_color(cls, albedo: color) -> "isotropic":
+        instance = cls()
+        instance.tex = solid_color.from_color(albedo)
+        return instance
+   
+    def scatter(self, r_in: Ray, rec: 'hit_record', attenuation: color, scattered: Ray) -> bool:
+        scattered.origin = rec.p
+        scattered.direction = random_unit_vector()
+        scattered.time = r_in.time
+        attenuation.x = self.tex.value(rec.u, rec.v, rec.p).x
+        attenuation.y = self.tex.value(rec.u, rec.v, rec.p).y
+        attenuation.z = self.tex.value(rec.u, rec.v, rec.p).z
+        return True
+
+#----------------------------------------------------------------------------------------
+
 class subsurface_simple(material):
     """
     Simple SSS approximation for waxy/translucent materials.

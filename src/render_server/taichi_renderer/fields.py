@@ -128,6 +128,25 @@ image_textures = []  # List of ti.Vector.field objects, one per loaded image
 image_texture_dims = ti.Vector.field(2, ti.i32, MAX_IMAGE_TEXTURES)  # [width, height] for each image
 
 # =============================================================================
+# CONSTANT MEDIUM (SMOKE/FOG) DATA
+# =============================================================================
+
+# Constant medium flags - marks which primitives are constant mediums
+is_constant_medium_sphere = ti.field(ti.i32, MAX_SPHERES)  # 0 = normal, 1 = constant medium
+is_constant_medium_quad = ti.field(ti.i32, MAX_QUADS)
+is_constant_medium_triangle = ti.field(ti.i32, MAX_TRIANGLES)
+
+# Constant medium properties
+medium_density_sphere = ti.field(ti.f32, MAX_SPHERES)  # Density value (will be converted to neg_inv_density)
+medium_density_quad = ti.field(ti.f32, MAX_QUADS)
+medium_density_triangle = ti.field(ti.f32, MAX_TRIANGLES)
+
+# Constant medium phase function (isotropic material) color
+medium_albedo_sphere = ti.Vector.field(3, ti.f32, MAX_SPHERES)
+medium_albedo_quad = ti.Vector.field(3, ti.f32, MAX_QUADS)
+medium_albedo_triangle = ti.Vector.field(3, ti.f32, MAX_TRIANGLES)
+
+# =============================================================================
 # PERLIN NOISE DATA
 # =============================================================================
 
@@ -161,6 +180,19 @@ cam_defocus_angle = ti.field(ti.f32, shape=())
 bg_color = ti.Vector.field(3, ti.f32, shape=())
 max_depth = ti.field(ti.i32, shape=())
 
+# Depth statistics (for average depth calculation)
+depth_accumulator = ti.field(ti.f32, shape=())
+path_count = ti.field(ti.i32, shape=())
+
+# Russian Roulette statistics
+rr_paths_killed = ti.field(ti.i32, shape=())       # Number of paths terminated by RR
+rr_paths_survived = ti.field(ti.i32, shape=())     # Number of paths that survived RR
+rr_depth_sum_killed = ti.field(ti.f32, shape=())   # Sum of depths where paths were killed
+rr_depth_sum_survived = ti.field(ti.f32, shape=()) # Sum of depths where paths survived
+
+# Max depth terminations statistics
+max_depth_terminations = ti.field(ti.i32, shape=())  # Number of paths that hit max depth
+
 # Accumulation buffer - allocated dynamically after camera initialization
 accum_buffer = None
 
@@ -183,6 +215,23 @@ def clear_accumulation_buffer():
     """Clear accumulation buffer to zero"""
     for py, px in accum_buffer:
         accum_buffer[py, px] = ti.math.vec3(0.0)
+
+
+@ti.kernel
+def reset_depth_stats():
+    """Reset depth statistics to zero"""
+    depth_accumulator[None] = 0.0
+    path_count[None] = 0
+    max_depth_terminations[None] = 0
+
+
+@ti.kernel
+def reset_rr_stats():
+    """Reset Russian Roulette statistics to zero"""
+    rr_paths_killed[None] = 0
+    rr_paths_survived[None] = 0
+    rr_depth_sum_killed[None] = 0.0
+    rr_depth_sum_survived[None] = 0.0
 
 
 def init_perlin_noise(perlin_obj):

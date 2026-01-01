@@ -123,6 +123,12 @@ class TaichiRenderer:
             fields.texture_color2[i] = materials['texture_color2'][i]
             fields.texture_image_idx[i] = materials['texture_image_idx'][i]
 
+        # Sphere Constant Medium data
+        for i in range(n):
+            fields.is_constant_medium_sphere[i] = materials['is_constant_medium'][i]
+            fields.medium_density_sphere[i] = materials['medium_density'][i]
+            fields.medium_albedo_sphere[i] = materials['medium_albedo'][i]
+
         # Quad Geometry
         nq = quad_geometry['num_quads']
         for i in range(nq):
@@ -134,15 +140,6 @@ class TaichiRenderer:
             fields.quad_w[i] = quad_geometry['quad_w'][i]
         fields.num_quads[None] = nq
 
-        # DEBUG: Verify quad 3 (back wall) data upload
-        if nq > 3:
-            print(f"DEBUG GPU UPLOAD - Quad 3 (back wall):")
-            print(f"  Q = {quad_geometry['quad_Q'][3]}")
-            print(f"  u = {quad_geometry['quad_u'][3]}")
-            print(f"  v = {quad_geometry['quad_v'][3]}")
-            print(f"  normal = {quad_geometry['quad_normal'][3]}")
-            print(f"  D = {quad_geometry['quad_D'][3]}")
-            print(f"  w = {quad_geometry['quad_w'][3]}")
 
         # Quad Materials (separate arrays from spheres)
         for i in range(nq):
@@ -160,12 +157,11 @@ class TaichiRenderer:
             fields.quad_texture_color2[i] = quad_materials['texture_color2'][i]
             fields.quad_texture_image_idx[i] = quad_materials['texture_image_idx'][i]
 
-        # DEBUG: Verify quad 3 material data
-        if nq > 3:
-            print(f"  material_type = {quad_materials['material_type'][3]}")
-            print(f"  material_albedo = {quad_materials['material_albedo'][3]}")
-            print(f"  emit_color = {quad_materials['material_emit_color'][3]}")
-            print(f"  texture_type = {quad_materials['texture_type'][3]}")
+        # Quad Constant Medium data
+        for i in range(nq):
+            fields.is_constant_medium_quad[i] = quad_materials['is_constant_medium'][i]
+            fields.medium_density_quad[i] = quad_materials['medium_density'][i]
+            fields.medium_albedo_quad[i] = quad_materials['medium_albedo'][i]
 
         # Triangle Geometry
         nt = triangle_geometry['num_triangles']
@@ -193,6 +189,12 @@ class TaichiRenderer:
             fields.triangle_texture_color1[i] = triangle_materials['texture_color1'][i]
             fields.triangle_texture_color2[i] = triangle_materials['texture_color2'][i]
             fields.triangle_texture_image_idx[i] = triangle_materials['texture_image_idx'][i]
+
+        # Triangle Constant Medium data
+        for i in range(nt):
+            fields.is_constant_medium_triangle[i] = triangle_materials['is_constant_medium'][i]
+            fields.medium_density_triangle[i] = triangle_materials['medium_density'][i]
+            fields.medium_albedo_triangle[i] = triangle_materials['medium_albedo'][i]
 
         # Image Textures - Upload texture data to GPU
         fields.image_textures.clear()  # Clear previous textures
@@ -269,6 +271,8 @@ class TaichiRenderer:
         kernels.render_sample()
         ti.sync()
         kernels.clear_accum_buffer()
+        fields.reset_depth_stats()
+        fields.reset_rr_stats()
         self.timing['kernel_warmup'] = time.time() - t0
         print(f"  Kernel Warmup: {self.timing['kernel_warmup']*1000:6.2f}ms (JIT compilation complete)")
 
@@ -356,8 +360,60 @@ class TaichiRenderer:
               f"Throughput: {throughput/1e6:5.2f}M pix/s │ "
               f"ETA: {eta:4.1f}s")
 
+    def _get_average_depth(self):
+        """Retrieve average depth from GPU fields"""
+        total_depth = fields.depth_accumulator[None]
+        total_paths = fields.path_count[None]
+        if total_paths > 0:
+            return total_depth / total_paths
+        return 0.0
+
+    def _get_rr_stats(self):
+        """Retrieve Russian Roulette statistics from GPU fields"""
+        killed = fields.rr_paths_killed[None]
+        survived = fields.rr_paths_survived[None]
+        depth_sum_killed = fields.rr_depth_sum_killed[None]
+        depth_sum_survived = fields.rr_depth_sum_survived[None]
+
+        total_rr_paths = killed + survived
+        kill_rate = (killed / total_rr_paths * 100) if total_rr_paths > 0 else 0.0
+        avg_depth_killed = (depth_sum_killed / killed) if killed > 0 else 0.0
+        avg_depth_survived = (depth_sum_survived / survived) if survived > 0 else 0.0
+
+        return {
+            'killed': killed,
+            'survived': survived,
+            'total_rr_paths': total_rr_paths,
+            'kill_rate': kill_rate,
+            'avg_depth_killed': avg_depth_killed,
+            'avg_depth_survived': avg_depth_survived
+        }
+
+    def _print_depth_stats(self):
+        """Print depth statistics in the format similar to CPU renderer"""
+        total_paths = fields.path_count[None]
+        if total_paths == 0:
+            return
+
+        # Calculate average depth
+        avg_depth = fields.depth_accumulator[None] / total_paths
+
+        # Get max depth terminations
+        max_depth_terms = fields.max_depth_terminations[None]
+        max_depth_percentage = (max_depth_terms / total_paths * 100) if total_paths > 0 else 0.0
+
+        # Get Russian Roulette terminations
+        rr_terms = fields.rr_paths_killed[None]
+        rr_percentage = (rr_terms / total_paths * 100) if total_paths > 0 else 0.0
+
+        print(f"\nDepth Statistics:")
+        print(f"  Average path depth: {avg_depth:.2f} (max: {self.max_depth})")
+        print(f"  Russian Roulette terminations: {rr_terms:,} ({rr_percentage:.1f}%)")
+        print(f"  Max depth terminations: {max_depth_terms:,} ({max_depth_percentage:.1f}%)")
+        print(f"  Total paths traced: {total_paths:,}")
+
     def _print_stats(self):
-        """Print final timing statistics"""
+        """Print final timing and depth statistics"""
         if not self.sample_times:
             return
 
@@ -374,6 +430,9 @@ class TaichiRenderer:
         print(f"Total Render Time: {total_render_time:6.2f}s")
         print(f"Sample Time: Avg {avg_sample_time*1000:5.2f}ms | Min {min_sample_time*1000:5.2f}ms | Max {max_sample_time*1000:5.2f}ms")
         print(f"Throughput: {pixels_per_sec/1e6:5.2f} Mpix/s ({rays_per_sec/1e6:5.2f} Mrays/s)")
+
+        # Print depth statistics in CPU renderer format
+        self._print_depth_stats()
 
     # =========================================================================
     # COMPATIBILITY METHODS (for InteractiveViewer and old API)

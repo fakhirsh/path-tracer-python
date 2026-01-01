@@ -56,9 +56,16 @@ def random_cosine_direction(normal: ti.math.vec3) -> ti.math.vec3:
 
     # Build orthonormal basis around normal
     w = normal.normalized()
-    a = ti.math.vec3(0.0, 1.0, 0.0) if ti.abs(w.x) > 0.9 else ti.math.vec3(1.0, 0.0, 0.0)
-    v = w.cross(a).normalized()
-    u = w.cross(v)
+    # Choose axis most perpendicular to w
+    a = ti.math.vec3(0.0)
+    if ti.abs(w.x) < 0.9:
+        a = ti.math.vec3(1.0, 0.0, 0.0)
+    elif ti.abs(w.y) < 0.9:
+        a = ti.math.vec3(0.0, 1.0, 0.0)
+    else:
+        a = ti.math.vec3(0.0, 0.0, 1.0)
+    v = a.cross(w).normalized()  # SWAPPED: was w.cross(a)
+    u = v.cross(w)                # SWAPPED: was w.cross(v)
 
     # Transform to world space
     return (x * u + y * v + z * w).normalized()
@@ -385,6 +392,94 @@ def hit_quad(quad_idx: ti.i32, ray_origin: ti.math.vec3, ray_dir: ti.math.vec3,
                     hit_normal = -normal
 
     return hit, t, hit_point, hit_normal
+
+
+@ti.func
+def apply_constant_medium(prim_type: ti.i32, prim_idx: ti.i32, ray_origin: ti.math.vec3, ray_dir: ti.math.vec3,
+                          t_min: ti.f32, t_max: ti.f32, t_entry: ti.f32) -> tuple:
+    """
+    Apply constant medium (volumetric smoke/fog) scattering.
+
+    Called after hitting a boundary primitive that is marked as a constant medium.
+    Implements probabilistic scattering inside the volume.
+
+    Args:
+        prim_type: Type of primitive (sphere, quad, triangle)
+        prim_idx: Index of primitive
+        ray_origin: Ray origin
+        ray_dir: Ray direction (unnormalized)
+        t_min: Minimum t value
+        t_max: Maximum t value
+        t_entry: t value where ray entered the boundary
+
+    Returns:
+        (is_medium_hit, t_scatter, scatter_point, scatter_normal, use_isotropic, t_exit)
+        - is_medium_hit: True if ray scatters inside medium
+        - t_scatter: t value where scattering occurs (or 0 if no scatter)
+        - scatter_point: Point where scattering occurs (or 0 if no scatter)
+        - scatter_normal: Arbitrary normal for medium (not used, but needed for consistency)
+        - use_isotropic: Always True if is_medium_hit is True
+        - t_exit: t value where ray exits the volume (used when ray passes through)
+    """
+    is_medium_hit = False
+    t_scatter = 0.0
+    scatter_point = ti.math.vec3(0.0)
+    scatter_normal = ti.math.vec3(1.0, 0.0, 0.0)  # Arbitrary
+    use_isotropic = False
+    t_exit = 0.0
+
+    # Check if this primitive is a constant medium
+    is_medium = 0
+    density = 0.0
+
+    if prim_type == 0:  # PRIM_SPHERE
+        is_medium = fields.is_constant_medium_sphere[prim_idx]
+        density = fields.medium_density_sphere[prim_idx]
+    elif prim_type == 1:  # PRIM_TRIANGLE
+        is_medium = fields.is_constant_medium_triangle[prim_idx]
+        density = fields.medium_density_triangle[prim_idx]
+    elif prim_type == 2:  # PRIM_QUAD
+        is_medium = fields.is_constant_medium_quad[prim_idx]
+        density = fields.medium_density_quad[prim_idx]
+
+    if is_medium > 0:
+        # Find exit point by traversing the BVH to find the next hit
+        # This is needed for multi-primitive boundaries (e.g., boxes made of 6 quads)
+        # For a box, the exit might be through a different quad than the entry
+        hit_exit, t_exit_temp, _, _, exit_prim_type, exit_prim_idx = traverse_bvh(
+            ray_origin, ray_dir, t_entry + 0.0001, 1e10
+        )
+
+        if hit_exit:
+            t_exit = t_exit_temp
+
+            # Clamp to ray interval
+            t1 = ti.max(t_entry, t_min)
+            t2 = ti.min(t_exit, t_max)
+
+            if t1 < t2:
+                # Adjust t1 to be non-negative
+                if t1 < 0.0:
+                    t1 = 0.0
+
+                # Calculate distance inside boundary
+                ray_length = ti.sqrt(ray_dir.dot(ray_dir))
+                distance_inside = (t2 - t1) * ray_length
+
+                # Probabilistic scattering based on density
+                # neg_inv_density = -1.0 / density
+                # hit_distance = neg_inv_density * log(random())
+                # Simplified: hit_distance = -log(random()) / density
+                hit_distance = -ti.log(ti.max(ti.random(), 1e-10)) / density
+
+                if hit_distance < distance_inside:
+                    # Ray scatters inside the medium
+                    t_scatter = t1 + hit_distance / ray_length
+                    scatter_point = ray_origin + t_scatter * ray_dir
+                    is_medium_hit = True
+                    use_isotropic = True
+
+    return is_medium_hit, t_scatter, scatter_point, scatter_normal, use_isotropic, t_exit
 
 
 @ti.func
@@ -717,7 +812,7 @@ def scatter(ray_dir: ti.math.vec3, hit_point: ti.math.vec3, normal: ti.math.vec3
     Compute scattered ray based on material type.
     Returns: (did_scatter, scatter_direction, attenuation)
 
-    Dispatches to Lambertian, Metal, or Dielectric based on material type.
+    Dispatches to Lambertian, Metal, Dielectric, Emissive, or Isotropic based on material type.
     Uses prim_type (0=sphere, 2=quad) to access correct material arrays.
     """
     # Get material type based on primitive type
@@ -800,6 +895,15 @@ def scatter(ray_dir: ti.math.vec3, hit_point: ti.math.vec3, normal: ti.math.vec3
     elif mat_type == 3:
         # Emissive materials don't scatter light
         scattered = False
+
+    # ISOTROPIC material (used for constant medium / smoke)
+    elif mat_type == 4:
+        # Scatter uniformly in all directions
+        scatter_dir = random_unit_vector()
+        # Use texture for albedo
+        albedo = eval_texture(prim_type, prim_idx, hit_point)
+        attenuation = albedo
+        scattered = True
 
     return scattered, scatter_dir, attenuation
 
@@ -909,23 +1013,33 @@ def eval_texture(prim_type: ti.i32, prim_idx: ti.i32, hit_point: ti.math.vec3) -
 # =============================================================================
 
 @ti.func
-def trace_ray(ray_origin: ti.math.vec3, ray_dir: ti.math.vec3) -> ti.math.vec3:
+def trace_ray(ray_origin: ti.math.vec3, ray_dir: ti.math.vec3):
     """
     Trace a single ray through the scene.
     Iterative implementation (no recursion).
-    Returns: final color for this ray path.
+    Returns: (final color for this ray path, actual depth reached, was_killed_by_rr, rr_depth, hit_max_depth)
 
     Loop structure:
     1. Traverse BVH to find closest hit
     2. If miss: return background color * throughput
     3. If hit: scatter based on material, update throughput
-    4. Repeat until max depth or ray absorbed
+    4. Apply Russian Roulette after minimum depth
+    5. Repeat until max depth or ray absorbed
     """
     color = ti.math.vec3(0.0)
     throughput = ti.math.vec3(1.0, 1.0, 1.0)
 
     current_origin = ray_origin
     current_dir = ray_dir.normalized()
+
+    actual_depth = 0
+    was_killed_by_rr = False
+    rr_depth = 0.0
+    hit_max_depth = False
+
+    # Russian Roulette parameters
+    RR_MIN_DEPTH = 5  # Start RR after this bounce
+    RR_MAX_PROB = 0.95  # Cap survival probability to avoid never terminating
 
     # Iterative path tracing loop (instead of recursion)
     for depth in range(fields.max_depth[None]):
@@ -935,30 +1049,116 @@ def trace_ray(ray_origin: ti.math.vec3, ray_dir: ti.math.vec3) -> ti.math.vec3:
         )
 
         if hit:
-            # Add emitted light from this surface
-            emit = emitted(prim_type, prim_idx, 0.0, 0.0, hit_point)
-            color = color + throughput * emit
+            # Check if this primitive is a constant medium
+            is_constant_medium = 0
+            if prim_type == 0:  # PRIM_SPHERE
+                is_constant_medium = fields.is_constant_medium_sphere[prim_idx]
+            elif prim_type == 1:  # PRIM_TRIANGLE
+                is_constant_medium = fields.is_constant_medium_triangle[prim_idx]
+            elif prim_type == 2:  # PRIM_QUAD
+                is_constant_medium = fields.is_constant_medium_quad[prim_idx]
 
-            # Material scattering
-            scattered, scatter_dir, attenuation = scatter(
-                current_dir, hit_point, normal, prim_type, prim_idx
-            )
+            # Declare variables for Taichi
+            scattered = False
+            scatter_dir = ti.math.vec3(0.0)
+            attenuation = ti.math.vec3(1.0)
+            volume_passthrough = False
+
+            # If this is a constant medium, check for scattering inside
+            if is_constant_medium > 0:
+                is_medium_hit, t_medium, medium_point, medium_normal, use_isotropic, t_exit = apply_constant_medium(
+                    prim_type, prim_idx, current_origin, current_dir, 0.001, 1e10, t
+                )
+
+                if is_medium_hit:
+                    # Ray scatters inside the volume - treat as isotropic scattering
+                    hit_point = medium_point
+                    normal = medium_normal
+
+                    # Use isotropic scattering with medium albedo
+                    scatter_dir = random_unit_vector()
+                    albedo = ti.math.vec3(0.0)
+                    if prim_type == 0:  # PRIM_SPHERE
+                        albedo = fields.medium_albedo_sphere[prim_idx]
+                    elif prim_type == 1:  # PRIM_TRIANGLE
+                        albedo = fields.medium_albedo_triangle[prim_idx]
+                    elif prim_type == 2:  # PRIM_QUAD
+                        albedo = fields.medium_albedo_quad[prim_idx]
+                    attenuation = albedo
+                    scattered = True
+
+                    # Note: Volumes don't emit light, so no emission check needed
+                elif t_exit > 0.0:
+                    # Ray passed through the volume without scattering
+                    # Valid exit found - continue tracing from beyond the exit point
+                    volume_passthrough = True
+                    # Move ray origin to just beyond the exit point
+                    # Use normalized epsilon to ensure consistent offset regardless of ray direction magnitude
+                    ray_length = ti.sqrt(current_dir.dot(current_dir))
+                    epsilon_t = 0.001 / ray_length  # Convert 0.001 units to t-space
+                    current_origin = current_origin + current_dir * (t_exit + epsilon_t)
+                    # Keep same direction
+                    # Don't modify throughput or depth
+                else:
+                    # t_exit <= 0 means exit finding failed (shouldn't happen for valid volumes)
+                    # Treat boundary as solid surface with its material (fallback behavior)
+                    # This prevents rays from getting stuck
+                    emit = emitted(prim_type, prim_idx, 0.0, 0.0, hit_point)
+                    color = color + throughput * emit
+                    scattered, scatter_dir, attenuation = scatter(
+                        current_dir, hit_point, normal, prim_type, prim_idx
+                    )
+            else:
+                # Normal non-volume primitive - handle emission and scattering
+                # Add emitted light from this surface
+                emit = emitted(prim_type, prim_idx, 0.0, 0.0, hit_point)
+                color = color + throughput * emit
+
+                # Material scattering
+                scattered, scatter_dir, attenuation = scatter(
+                    current_dir, hit_point, normal, prim_type, prim_idx
+                )
 
             if scattered:
                 # Update ray for next bounce
                 current_origin = hit_point
                 current_dir = scatter_dir
                 throughput = throughput * attenuation
-            else:
+                actual_depth = depth + 1
+
+                # Check if we've reached max depth
+                if depth + 1 >= fields.max_depth[None]:
+                    hit_max_depth = True
+                    break
+
+                # Russian Roulette path termination (after minimum depth)
+                # Check AFTER scattering to ensure we've completed this bounce
+                if depth + 1 >= RR_MIN_DEPTH:
+                    # Survival probability = max component of throughput (luminance-based alternative)
+                    # This ensures paths with low contribution are more likely to be terminated
+                    survival_prob = ti.min(ti.max(ti.max(throughput.x, throughput.y), throughput.z), RR_MAX_PROB)
+
+                    if ti.random() > survival_prob:
+                        # Path terminated by Russian Roulette
+                        was_killed_by_rr = True
+                        rr_depth = ti.cast(depth + 1, ti.f32)
+                        break
+                    else:
+                        # Path survived - boost throughput to maintain unbiased result
+                        throughput = throughput / survival_prob
+            elif not volume_passthrough:
                 # Ray was absorbed (likely hit an emissive surface)
+                # Don't break if this was a volume passthrough - keep tracing
+                actual_depth = depth + 1
                 break
 
         else:
             # Ray missed - add background color weighted by throughput
             color = color + throughput * fields.bg_color[None]
+            actual_depth = depth
             break
 
-    return color
+    return color, actual_depth, was_killed_by_rr, rr_depth, hit_max_depth
 
 
 # =============================================================================
@@ -970,12 +1170,31 @@ def render_sample():
     """
     Render one sample per pixel.
     Each thread handles one pixel independently.
-    Accumulates result into accum_buffer.
+    Accumulates result into accum_buffer and depth statistics.
     """
     for py, px in fields.accum_buffer:
         ray_origin, ray_dir = get_ray(px, py)
-        color = trace_ray(ray_origin, ray_dir)
+        color, depth, was_killed_by_rr, rr_depth, hit_max_depth = trace_ray(ray_origin, ray_dir)
         fields.accum_buffer[py, px] += color
+
+        # Accumulate depth statistics atomically (thread-safe)
+        ti.atomic_add(fields.depth_accumulator[None], ti.cast(depth, ti.f32))
+        ti.atomic_add(fields.path_count[None], 1)
+
+        # Track max depth terminations
+        if hit_max_depth:
+            ti.atomic_add(fields.max_depth_terminations[None], 1)
+
+        # Accumulate Russian Roulette statistics
+        if was_killed_by_rr:
+            ti.atomic_add(fields.rr_paths_killed[None], 1)
+            ti.atomic_add(fields.rr_depth_sum_killed[None], rr_depth)
+        else:
+            # Path either completed naturally or hit max depth
+            # Only count as "survived" if it actually went through RR checks (depth >= 3)
+            if depth >= 3:
+                ti.atomic_add(fields.rr_paths_survived[None], 1)
+                ti.atomic_add(fields.rr_depth_sum_survived[None], ti.cast(depth, ti.f32))
 
 
 @ti.kernel

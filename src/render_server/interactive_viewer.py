@@ -135,10 +135,12 @@ class InteractiveViewer(TaichiRenderer):
         The render loop will naturally continue from sample 0.
         """
         import time
+        from render_server.taichi_renderer import fields
         self.current_sample = 0
         self.sample_times = []  # Reset timing stats
         self.render_start_time = time.time()  # Reset to current time
         self.clear_accumulation_buffer()
+        fields.reset_depth_stats()
         self.is_rendering_active = True  # Resume rendering
 
         # Print restart notification
@@ -177,6 +179,9 @@ class InteractiveViewer(TaichiRenderer):
         rays_per_sec = pixels_per_sec * self.max_depth
         samples_per_sec = 1.0 / avg_sample_time if avg_sample_time > 0 else 0
 
+        # Get depth statistics
+        avg_depth = self._get_average_depth()
+
         # Print summary
         print(f"\n{'═'*60}")
         print(f"RENDER SUMMARY")
@@ -184,6 +189,7 @@ class InteractiveViewer(TaichiRenderer):
         print(f"Resolution:       {self.cam.img_width} x {self.cam.img_height} ({total_pixels:,} pixels)")
         print(f"Samples:          {self.current_sample} / {self.cam.samples_per_pixel}")
         print(f"Max Ray Depth:    {self.max_depth}")
+        print(f"Avg Path Depth:   {avg_depth:.2f}")
         print(f"Scene Complexity: {self.num_spheres} spheres, {self.num_bvh_nodes} BVH nodes")
 
         print(f"\n{'─'*60}")
@@ -347,10 +353,12 @@ class InteractiveViewer(TaichiRenderer):
         # Warm up JIT compiler (force kernel compilation during setup)
         print("\nWarming up GPU kernels...")
         import time
+        from render_server.taichi_renderer import fields
         warmup_start = time.time()
         self.render_sample(0)  # Compile all kernels on first call
         ti.sync()  # Wait for GPU to finish
         self.clear_accumulation_buffer()  # Clear the warmup sample
+        fields.reset_depth_stats()  # Reset depth statistics
         warmup_time = time.time() - warmup_start
         print(f"  Kernel Warmup: {warmup_time*1000:6.2f}ms (JIT compilation complete)")
 

@@ -1,6 +1,7 @@
 from core.material import *
 from core.texture import checker_texture, image_texture, noise_texture
 from core import quad
+from core.constant_medium import constant_medium
 from render_server.renderer_factory import RendererFactory
 from render_server.interactive_viewer import InteractiveViewer
 from util import *
@@ -966,3 +967,162 @@ def cornell_box():
 
 #------------------------------------------------------------------------
 
+def cornell_smoke():
+    """Cornell box with smoke volumes - Interactive version"""
+    world = hittable_list()
+
+    # Materials
+    red = lambertian.from_color(color(0.65, 0.05, 0.05))
+    white = lambertian.from_color(color(0.73, 0.73, 0.73))
+    green = lambertian.from_color(color(0.12, 0.45, 0.15))
+    light = diffuse_light.from_color(color(7, 7, 7))
+
+    # Cornell box walls
+    world.add(quad(point3(555, 0, 0), vec3(0, 555, 0), vec3(0, 0, 555), green))      # right wall
+    world.add(quad(point3(0, 0, 0), vec3(0, 555, 0), vec3(0, 0, 555), red))          # left wall
+    world.add(quad(point3(113, 554, 127), vec3(330, 0, 0), vec3(0, 0, 305), light))  # light
+    world.add(quad(point3(0, 555, 0), vec3(555, 0, 0), vec3(0, 0, 555), white))      # ceiling
+    world.add(quad(point3(0, 0, 0), vec3(555, 0, 0), vec3(0, 0, 555), white))        # floor
+    world.add(quad(point3(0, 0, 555), vec3(555, 0, 0), vec3(0, 555, 0), white))      # back wall
+
+    # Create boxes (rotated and positioned)
+    # Box 1: tall box on the right (rotated 15 degrees)
+    box1 = box(point3(265, 0, 295), point3(430, 330, 460), white, 15)
+
+    # Box 2: short box on the left (rotated -18 degrees)
+    box2 = box(point3(130, 0, 65), point3(295, 165, 230), white, -18)
+
+    # Wrap boxes in constant medium (smoke/fog)
+    # Box 1: black smoke (density = 0.01)
+    world.add(constant_medium.from_color(box1, color(0, 0, 0), 0.01))
+
+    # Box 2: white smoke (density = 0.01)
+    world.add(constant_medium.from_color(box2, color(1, 1, 1), 0.01))
+
+    # Create BVH
+    bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
+    world = hittable_list()
+    world.add(bvh)
+
+    # Camera setup
+    cam = camera()
+    cam.aspect_ratio = 1.0
+    cam.img_width = 800
+    cam.samples_per_pixel = 1000
+
+    cam.vfov = 40
+    cam.lookfrom = point3(278, 278, -800)
+    cam.lookat = point3(278, 278, 0)
+    cam.vup = vec3(0, 1, 0)
+    cam.defocus_angle = 0
+
+    # Use Interactive GPU renderer
+    viewer = InteractiveViewer(world, cam, "../temp/cornell_smoke.ppm")
+    viewer.background_color = color(0, 0, 0)
+    viewer.max_depth = 50
+
+    viewer.render_interactive()
+
+#------------------------------------------------------------------------
+
+def vol2_final_scene():
+    """The final scene from Ray Tracing: The Next Week - Interactive version"""
+    # Ground boxes
+    boxes1 = hittable_list()
+    ground = lambertian.from_color(color(0.48, 0.83, 0.53))
+
+    boxes_per_side = 20
+    for i in range(boxes_per_side):
+        for j in range(boxes_per_side):
+            w = 100.0
+            x0 = -1000.0 + i * w
+            z0 = -1000.0 + j * w
+            y0 = 0.0
+            x1 = x0 + w
+            y1 = random.uniform(1, 101)
+            z1 = z0 + w
+
+            boxes1.add(box(point3(x0, y0, z0), point3(x1, y1, z1), ground))
+
+    world = hittable_list()
+
+    # Add ground boxes as BVH
+    world.add(bvh_node.from_objects(boxes1.objects, 0, len(boxes1.objects)))
+
+    # Light
+    light = diffuse_light.from_color(color(7, 7, 7))
+    world.add(quad(point3(123, 554, 147), vec3(300, 0, 0), vec3(0, 0, 265), light))
+
+    # Moving sphere
+    center1 = point3(400, 400, 200)
+    center2 = center1 + vec3(30, 0, 0)
+    sphere_material = lambertian.from_color(color(0.7, 0.3, 0.1))
+    world.add(Sphere.moving(center1, center2, 50, sphere_material))
+
+    # Glass sphere
+    world.add(Sphere.stationary(point3(260, 150, 45), 50, dielectric(1.5)))
+
+    # Metal sphere
+    world.add(Sphere.stationary(
+        point3(0, 150, 145), 50, metal(color(0.8, 0.8, 0.9), 1.0)
+    ))
+
+    # Glass sphere with volume inside
+    boundary = Sphere.stationary(point3(360, 150, 145), 70, dielectric(1.5))
+    world.add(boundary)
+    world.add(constant_medium.from_color(boundary, color(0.2, 0.4, 0.9), 0.2))
+
+    # Global fog
+    boundary = Sphere.stationary(point3(0, 0, 0), 5000, dielectric(1.5))
+    world.add(constant_medium.from_color(boundary, color(1, 1, 1), 0.0001))
+
+    # Earth sphere
+    emat = lambertian.from_texture(image_texture("assets/images/earthmap.jpg"))
+    world.add(Sphere.stationary(point3(400, 200, 400), 100, emat))
+
+    # Perlin noise sphere
+    pertext = noise_texture(0.2)
+    world.add(Sphere.stationary(point3(220, 280, 300), 80, lambertian.from_texture(pertext)))
+
+    # Box of spheres (translated to vec3(-100, 270, 395))
+    boxes2 = hittable_list()
+    white = lambertian.from_color(color(0.73, 0.73, 0.73))
+    ns = 1000
+    offset = vec3(-100, 270, 395)
+    for j in range(ns):
+        random_pos = point3.random(0, 165)
+        boxes2.add(Sphere.stationary(random_pos + offset, 10, white))
+
+    world.add(bvh_node.from_objects(boxes2.objects, 0, len(boxes2.objects)))
+
+    # Create final BVH
+    bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
+    world = hittable_list()
+    world.add(bvh)
+
+    # Camera setup
+    cam = camera()
+
+    cam.aspect_ratio = 1.0
+    cam.img_width = 800
+    cam.samples_per_pixel = 1000
+
+    cam.vfov = 40
+    cam.lookfrom = point3(478, 278, -600)
+    cam.lookat = point3(278, 278, 0)
+    cam.vup = vec3(0, 1, 0)
+
+    cam.defocus_angle = 0
+
+    # Use Interactive GPU renderer
+    viewer = InteractiveViewer(world, cam, "../temp/vol2_final_scene.ppm")
+    viewer.background_color = color(0, 0, 0)
+    viewer.max_depth = 50
+
+    viewer.render_interactive()
+
+#------------------------------------------------------------------------
+
+def vol2_final_scene_simple():
+    """Simplified version of the final scene for faster testing"""
+    pass

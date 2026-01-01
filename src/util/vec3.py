@@ -320,7 +320,13 @@ def random_cosine_direction(normal: vec3) -> vec3:
     
     # Build orthonormal basis around normal
     w = normalize(normal)
-    a = vec3(0, 1, 0) if abs(w.x) > 0.9 else vec3(1, 0, 0)
+    # Choose axis most perpendicular to w
+    if abs(w.x) < 0.9:
+        a = vec3(1, 0, 0)
+    elif abs(w.y) < 0.9:
+        a = vec3(0, 1, 0)
+    else:
+        a = vec3(0, 0, 1)
     v = normalize(cross(w, a))
     u = cross(w, v)
     

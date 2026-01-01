@@ -16,6 +16,7 @@ MAT_LAMBERTIAN = 0
 MAT_METAL = 1
 MAT_DIELECTRIC = 2
 MAT_EMISSIVE = 3
+MAT_ISOTROPIC = 4
 
 # Texture type constants
 TEX_SOLID = 0
@@ -38,8 +39,12 @@ def extract_spheres(world) -> List:
     spheres = []
 
     def _extract(obj):
+        # Check if this is a constant_medium - extract its boundary
+        from core.constant_medium import constant_medium
+        if isinstance(obj, constant_medium):
+            _extract(obj.boundary)
         # Check if this is a Sphere
-        if isinstance(obj, Sphere):
+        elif isinstance(obj, Sphere):
             if id(obj) not in seen:
                 seen.add(id(obj))
                 spheres.append(obj)
@@ -72,8 +77,12 @@ def extract_quads(world) -> List:
     quads = []
 
     def _extract(obj):
+        # Check if this is a constant_medium - extract its boundary
+        from core.constant_medium import constant_medium
+        if isinstance(obj, constant_medium):
+            _extract(obj.boundary)
         # Check if this is a quad
-        if isinstance(obj, quad):
+        elif isinstance(obj, quad):
             if id(obj) not in seen:
                 seen.add(id(obj))
                 quads.append(obj)
@@ -106,8 +115,12 @@ def extract_triangles(world) -> List:
     triangles = []
 
     def _extract(obj):
+        # Check if this is a constant_medium - extract its boundary
+        from core.constant_medium import constant_medium
+        if isinstance(obj, constant_medium):
+            _extract(obj.boundary)
         # Check if this is a triangle
-        if isinstance(obj, triangle):
+        elif isinstance(obj, triangle):
             if id(obj) not in seen:
                 seen.add(id(obj))
                 triangles.append(obj)
@@ -231,13 +244,14 @@ def compile_triangle_geometry(triangles: List) -> Dict[str, np.ndarray]:
     }
 
 
-def compile_materials(spheres: List, image_texture_registry: Dict = None) -> Dict[str, np.ndarray]:
+def compile_materials(spheres: List, image_texture_registry: Dict = None, medium_registry: Dict = None) -> Dict[str, np.ndarray]:
     """
     Extract material properties from spheres.
 
     Args:
         spheres: List of sphere objects
         image_texture_registry: Dict mapping image_texture objects to their GPU indices
+        medium_registry: Dict mapping primitive id() to constant medium properties
 
     Returns dict with:
         'material_type': np.ndarray of shape (N,) dtype=int32
@@ -250,10 +264,15 @@ def compile_materials(spheres: List, image_texture_registry: Dict = None) -> Dic
         'texture_color1': np.ndarray of shape (N, 3) dtype=float32
         'texture_color2': np.ndarray of shape (N, 3) dtype=float32
         'texture_image_idx': np.ndarray of shape (N,) dtype=int32
+        'is_constant_medium': np.ndarray of shape (N,) dtype=int32
+        'medium_density': np.ndarray of shape (N,) dtype=float32
+        'medium_albedo': np.ndarray of shape (N, 3) dtype=float32
     """
     n = len(spheres)
     if image_texture_registry is None:
         image_texture_registry = {}
+    if medium_registry is None:
+        medium_registry = {}
 
     material_type = np.zeros(n, dtype=np.int32)
     material_albedo = np.zeros((n, 3), dtype=np.float32)
@@ -266,6 +285,11 @@ def compile_materials(spheres: List, image_texture_registry: Dict = None) -> Dic
     texture_color1 = np.zeros((n, 3), dtype=np.float32)
     texture_color2 = np.zeros((n, 3), dtype=np.float32)
     texture_image_idx = np.full(n, -1, dtype=np.int32)  # -1 means no image texture
+
+    # Constant medium data
+    is_constant_medium = np.zeros(n, dtype=np.int32)
+    medium_density = np.zeros(n, dtype=np.float32)
+    medium_albedo = np.zeros((n, 3), dtype=np.float32)
 
     for i, sphere in enumerate(spheres):
         mat = sphere.material
@@ -385,6 +409,12 @@ def compile_materials(spheres: List, image_texture_registry: Dict = None) -> Dic
             texture_color1[i] = [0.8, 0.8, 0.8]
             texture_color2[i] = [0.8, 0.8, 0.8]
 
+        # Check if this sphere is a constant medium boundary
+        if id(sphere) in medium_registry:
+            is_constant_medium[i] = 1
+            medium_density[i] = medium_registry[id(sphere)]['density']
+            medium_albedo[i] = medium_registry[id(sphere)]['albedo']
+
     return {
         'material_type': material_type,
         'material_albedo': material_albedo,
@@ -395,11 +425,14 @@ def compile_materials(spheres: List, image_texture_registry: Dict = None) -> Dic
         'texture_scale': texture_scale,
         'texture_color1': texture_color1,
         'texture_color2': texture_color2,
-        'texture_image_idx': texture_image_idx
+        'texture_image_idx': texture_image_idx,
+        'is_constant_medium': is_constant_medium,
+        'medium_density': medium_density,
+        'medium_albedo': medium_albedo
     }
 
 
-def compile_quad_materials(quads: List, image_texture_registry: Dict = None) -> Dict[str, np.ndarray]:
+def compile_quad_materials(quads: List, image_texture_registry: Dict = None, medium_registry: Dict = None) -> Dict[str, np.ndarray]:
     """
     Extract material properties from quads.
     Similar to compile_materials but for quads.
@@ -414,10 +447,16 @@ def compile_quad_materials(quads: List, image_texture_registry: Dict = None) -> 
         'texture_scale': np.ndarray of shape (N,) dtype=float32
         'texture_color1': np.ndarray of shape (N, 3) dtype=float32
         'texture_color2': np.ndarray of shape (N, 3) dtype=float32
+        'texture_image_idx': np.ndarray of shape (N,) dtype=int32
+        'is_constant_medium': np.ndarray of shape (N,) dtype=int32
+        'medium_density': np.ndarray of shape (N,) dtype=float32
+        'medium_albedo': np.ndarray of shape (N, 3) dtype=float32
     """
     n = len(quads)
     if image_texture_registry is None:
         image_texture_registry = {}
+    if medium_registry is None:
+        medium_registry = {}
 
     material_type = np.zeros(n, dtype=np.int32)
     material_albedo = np.zeros((n, 3), dtype=np.float32)
@@ -430,6 +469,11 @@ def compile_quad_materials(quads: List, image_texture_registry: Dict = None) -> 
     texture_color1 = np.zeros((n, 3), dtype=np.float32)
     texture_color2 = np.zeros((n, 3), dtype=np.float32)
     texture_image_idx = np.full(n, -1, dtype=np.int32)
+
+    # Constant medium data
+    is_constant_medium = np.zeros(n, dtype=np.int32)
+    medium_density = np.zeros(n, dtype=np.float32)
+    medium_albedo = np.zeros((n, 3), dtype=np.float32)
 
     for i, q in enumerate(quads):
         mat = q.mat
@@ -550,6 +594,12 @@ def compile_quad_materials(quads: List, image_texture_registry: Dict = None) -> 
             texture_color1[i] = [0.8, 0.8, 0.8]
             texture_color2[i] = [0.8, 0.8, 0.8]
 
+        # Check if this quad is a constant medium boundary
+        if id(q) in medium_registry:
+            is_constant_medium[i] = 1
+            medium_density[i] = medium_registry[id(q)]['density']
+            medium_albedo[i] = medium_registry[id(q)]['albedo']
+
     return {
         'material_type': material_type,
         'material_albedo': material_albedo,
@@ -560,11 +610,14 @@ def compile_quad_materials(quads: List, image_texture_registry: Dict = None) -> 
         'texture_scale': texture_scale,
         'texture_color1': texture_color1,
         'texture_color2': texture_color2,
-        'texture_image_idx': texture_image_idx
+        'texture_image_idx': texture_image_idx,
+        'is_constant_medium': is_constant_medium,
+        'medium_density': medium_density,
+        'medium_albedo': medium_albedo
     }
 
 
-def compile_triangle_materials(triangles: List, image_texture_registry: Dict = None) -> Dict[str, np.ndarray]:
+def compile_triangle_materials(triangles: List, image_texture_registry: Dict = None, medium_registry: Dict = None) -> Dict[str, np.ndarray]:
     """
     Extract material properties from triangles.
     Similar to compile_materials but for triangles.
@@ -579,10 +632,16 @@ def compile_triangle_materials(triangles: List, image_texture_registry: Dict = N
         'texture_scale': np.ndarray of shape (N,) dtype=float32
         'texture_color1': np.ndarray of shape (N, 3) dtype=float32
         'texture_color2': np.ndarray of shape (N, 3) dtype=float32
+        'texture_image_idx': np.ndarray of shape (N,) dtype=int32
+        'is_constant_medium': np.ndarray of shape (N,) dtype=int32
+        'medium_density': np.ndarray of shape (N,) dtype=float32
+        'medium_albedo': np.ndarray of shape (N, 3) dtype=float32
     """
     n = len(triangles)
     if image_texture_registry is None:
         image_texture_registry = {}
+    if medium_registry is None:
+        medium_registry = {}
 
     material_type = np.zeros(n, dtype=np.int32)
     material_albedo = np.zeros((n, 3), dtype=np.float32)
@@ -595,6 +654,11 @@ def compile_triangle_materials(triangles: List, image_texture_registry: Dict = N
     texture_color1 = np.zeros((n, 3), dtype=np.float32)
     texture_color2 = np.zeros((n, 3), dtype=np.float32)
     texture_image_idx = np.full(n, -1, dtype=np.int32)
+
+    # Constant medium data
+    is_constant_medium = np.zeros(n, dtype=np.int32)
+    medium_density = np.zeros(n, dtype=np.float32)
+    medium_albedo = np.zeros((n, 3), dtype=np.float32)
 
     for i, tri in enumerate(triangles):
         mat = tri.mat
@@ -715,6 +779,12 @@ def compile_triangle_materials(triangles: List, image_texture_registry: Dict = N
             texture_color1[i] = [0.8, 0.8, 0.8]
             texture_color2[i] = [0.8, 0.8, 0.8]
 
+        # Check if this triangle is a constant medium boundary
+        if id(tri) in medium_registry:
+            is_constant_medium[i] = 1
+            medium_density[i] = medium_registry[id(tri)]['density']
+            medium_albedo[i] = medium_registry[id(tri)]['albedo']
+
     return {
         'material_type': material_type,
         'material_albedo': material_albedo,
@@ -725,7 +795,10 @@ def compile_triangle_materials(triangles: List, image_texture_registry: Dict = N
         'texture_scale': texture_scale,
         'texture_color1': texture_color1,
         'texture_color2': texture_color2,
-        'texture_image_idx': texture_image_idx
+        'texture_image_idx': texture_image_idx,
+        'is_constant_medium': is_constant_medium,
+        'medium_density': medium_density,
+        'medium_albedo': medium_albedo
     }
 
 
@@ -771,6 +844,83 @@ def build_image_texture_registry(world) -> Tuple[Dict[int, int], List]:
     return image_texture_registry, image_texture_list
 
 
+def build_constant_medium_registry(world) -> Dict[int, Dict]:
+    """
+    Build a registry of all constant_medium objects and their properties.
+
+    Returns:
+        constant_medium_registry: Dict mapping boundary primitive id() to medium properties
+            {
+                boundary_prim_id: {
+                    'density': float,
+                    'albedo': (r, g, b) tuple
+                }
+            }
+    """
+    from core.constant_medium import constant_medium
+    from core.hittable_list import hittable_list
+    from core.bvh_node import bvh_node
+    from core.sphere import Sphere
+    from core.quad import quad
+    from core.triangle import triangle
+
+    medium_registry = {}  # boundary primitive id -> medium properties
+
+    def extract_boundary_primitives(obj):
+        """Recursively extract boundary primitives from a hittable object"""
+        primitives = []
+        if isinstance(obj, (Sphere, quad, triangle)):
+            primitives.append(obj)
+        elif isinstance(obj, hittable_list):
+            for item in obj.objects:
+                primitives.extend(extract_boundary_primitives(item))
+        elif isinstance(obj, bvh_node):
+            if obj.left is not None:
+                primitives.extend(extract_boundary_primitives(obj.left))
+            if obj.right is not None:
+                primitives.extend(extract_boundary_primitives(obj.right))
+        return primitives
+
+    def extract_constant_mediums(obj):
+        """Recursively find all constant_medium objects"""
+        if isinstance(obj, constant_medium):
+            # Extract density
+            density = -1.0 / obj.neg_inv_density if obj.neg_inv_density != 0 else 0.01
+
+            # Extract albedo from phase function (isotropic material)
+            albedo = (1.0, 1.0, 1.0)
+            if hasattr(obj.phase_function, 'tex'):
+                try:
+                    # Sample the texture to get albedo color
+                    from util import point3
+                    sample_color = obj.phase_function.tex.value(0, 0, point3(0, 0, 0))
+                    albedo = (sample_color.x, sample_color.y, sample_color.z)
+                except:
+                    pass
+
+            # Get all boundary primitives
+            boundary_prims = extract_boundary_primitives(obj.boundary)
+
+            # Register each boundary primitive
+            for prim in boundary_prims:
+                medium_registry[id(prim)] = {
+                    'density': density,
+                    'albedo': albedo
+                }
+
+        elif isinstance(obj, hittable_list):
+            for item in obj.objects:
+                extract_constant_mediums(item)
+        elif isinstance(obj, bvh_node):
+            if obj.left is not None:
+                extract_constant_mediums(obj.left)
+            if obj.right is not None:
+                extract_constant_mediums(obj.right)
+
+    extract_constant_mediums(world)
+    return medium_registry
+
+
 def compile_scene(world) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List, Dict[str, np.ndarray], List, Dict[str, np.ndarray], List, Dict[int, int], List]:
     """
     Main entry point: compile entire scene.
@@ -789,17 +939,20 @@ def compile_scene(world) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], 
     # Build image texture registry first
     image_texture_registry, image_texture_list = build_image_texture_registry(world)
 
+    # Build constant medium registry
+    medium_registry = build_constant_medium_registry(world)
+
     spheres = extract_spheres(world)
     quads = extract_quads(world)
     triangles = extract_triangles(world)
 
     geometry = compile_geometry(spheres)
-    materials = compile_materials(spheres, image_texture_registry)
+    materials = compile_materials(spheres, image_texture_registry, medium_registry)
 
     quad_geometry = compile_quad_geometry(quads)
-    quad_materials = compile_quad_materials(quads, image_texture_registry)
+    quad_materials = compile_quad_materials(quads, image_texture_registry, medium_registry)
 
     triangle_geometry = compile_triangle_geometry(triangles)
-    triangle_materials = compile_triangle_materials(triangles, image_texture_registry)
+    triangle_materials = compile_triangle_materials(triangles, image_texture_registry, medium_registry)
 
     return geometry, materials, spheres, quad_geometry, quad_materials, quads, triangle_geometry, triangle_materials, triangles, image_texture_registry, image_texture_list
