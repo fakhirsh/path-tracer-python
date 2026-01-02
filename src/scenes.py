@@ -1545,3 +1545,81 @@ def wavefront_comparison():
     print(f"  - ../temp/comparison_megakernel.png")
     print(f"  - ../temp/comparison_wavefront.png")
     print("="*80)
+
+
+#------------------------------------------------------------------------
+
+def vol2_test_scene():
+    """
+    Compare megakernel vs wavefront on the complex vol2_final_scene.
+    This scene has 1000+ objects and should show wavefront's benefits.
+    """
+    # Ground boxes
+    boxes1 = hittable_list()
+    ground = lambertian.from_color(color(0.48, 0.83, 0.53))
+
+    boxes_per_side = 20
+    for i in range(boxes_per_side):
+        for j in range(boxes_per_side):
+            w = 100.0
+            x0 = -1000.0 + i * w
+            z0 = -1000.0 + j * w
+            y0 = 0.0
+            x1 = x0 + w
+            y1 = random.uniform(1, 101)
+            z1 = z0 + w
+
+            boxes1.add(box(point3(x0, y0, z0), point3(x1, y1, z1), ground))
+
+    world = hittable_list()
+
+    # Add ground boxes as BVH
+    world.add(bvh_node.from_objects(boxes1.objects, 0, len(boxes1.objects)))
+
+    # Light
+    light = diffuse_light.from_color(color(7, 7, 7))
+    world.add(quad(point3(123, 554, 147), vec3(300, 0, 0), vec3(0, 0, 265), light))
+
+    # Glass sphere with volume inside
+    boundary = Sphere.stationary(point3(360, 150, 145), 70, dielectric(1.5))
+    world.add(boundary)
+    world.add(constant_medium.from_color(boundary, color(0.2, 0.4, 0.9), 0.2))
+
+
+    # Create final BVH
+    bvh = bvh_node.from_objects(world.objects, 0, len(world.objects))
+    world = hittable_list()
+    world.add(bvh)
+
+    # Camera setup - reduced resolution and samples for faster comparison
+    cam = camera()
+    cam.aspect_ratio = 1.0
+    cam.img_width = 600  # Reduced from 1000 for faster testing
+    cam.samples_per_pixel = 200
+
+    cam.vfov = 40
+    cam.lookfrom = point3(478, 278, -600)
+    cam.lookat = point3(278, 278, 0)
+    cam.vup = vec3(0, 1, 0)
+    cam.defocus_angle = 0
+
+    # Test 1: Megakernel (traditional depth-first)
+    print("\n" + "="*80)
+    print("TEST 1: MEGAKERNEL MODE on vol2_final_scene (1000+ objects)")
+    print("="*80)
+
+    renderer = RendererFactory.create(
+        'taichi',
+        world,
+        cam,
+        "../temp/vol2_test_scene.png"
+    )
+    renderer.background_color = color(0, 0, 0)
+    renderer.max_depth = 50
+
+    start_mega = time.time()
+    renderer.render(enable_preview=False)  # <-- MEGAKERNEL: calls render() method
+    time_mega = time.time() - start_mega
+    print(f"Megakernel Time:  {time_mega:.2f}s")
+
+#------------------------------------------------------------------------

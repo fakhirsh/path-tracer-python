@@ -33,7 +33,7 @@ Comprehensive list of all features, enhancements, and architectural components i
 ## GEOMETRIC PRIMITIVES
 - Spheres (stationary + moving)
 - Quads (parametric intersection)
-- Triangles (Möller-Trumbore algorithm)
+- Triangles (Muller-Trumbore algorithm)
 - Meshes (OBJ loading via PyWavefront)
 - Klein bottle (parametric surface)
 
